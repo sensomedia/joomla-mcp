@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="component" method="upgrade">
+    <name>com_sensomcp</name>
+    <author>Fred Oliver</author>
+    <authorEmail>fred@sensomedia.com</authorEmail>
+    <authorUrl>https://sensomedia.com</authorUrl>
+    <copyright>(C) 2026 Sensomedia. All rights reserved.</copyright>
+    <license>GNU General Public License version 2 or later</license>
+    <version>1.2.9</version>
+    <creationDate>2026-08-19</creationDate>
+    <description>COM_SENSOMCP_XML_DESCRIPTION</description>
+    <changelogurl>https://www.sensomcp.com/index.php?sensomcp_changelog=com_sensomcp&amp;type=component&amp;catid=1</changelogurl>
+
+    <scriptfile>script.php</scriptfile>
+
+    <namespace path="src">Sensomedia\Component\Sensomcp</namespace>
+
+    <install>
+        <sql>
+            <file driver="mysql" charset="utf8">sql/install.mysql.utf8.sql</file>
+        </sql>
+    </install>
+    <uninstall>
+        <sql>
+            <file driver="mysql" charset="utf8">sql/uninstall.mysql.utf8.sql</file>
+        </sql>
+    </uninstall>
+    <update>
+        <schemas>
+            <schemapath type="mysql">sql/updates/mysql</schemapath>
+        </schemas>
+    </update>
+
+    <files folder="site">
+        <folder>src</folder>
+        <folder>tmpl</folder>
+        <folder>language</folder>
+    </files>
+
+    <languages folder="site/language">
+        <language tag="fr-FR">fr-FR/com_sensomcp.ini</language>
+        <language tag="en-GB">en-GB/com_sensomcp.ini</language>
+        <language tag="de-DE">de-DE/com_sensomcp.ini</language>
+        <language tag="es-ES">es-ES/com_sensomcp.ini</language>
+        <language tag="it-IT">it-IT/com_sensomcp.ini</language>
+        <language tag="nl-NL">nl-NL/com_sensomcp.ini</language>
+        <language tag="pt-BR">pt-BR/com_sensomcp.ini</language>
+    </languages>
+
+    <administration>
+        <menu link="" img="class:component">COM_SENSOMCP_MENU</menu>
+        <submenu>
+            <menu link="option=com_sensomcp&amp;view=dashboard" view="dashboard" img="class:dashboard">COM_SENSOMCP_SUBMENU_DASHBOARD</menu>
+            <menu link="option=com_sensomcp&amp;view=settings" view="settings" img="class:options">COM_SENSOMCP_SUBMENU_SETTINGS</menu>
+            <menu link="option=com_sensomcp&amp;view=security" view="security" img="class:lock">COM_SENSOMCP_SUBMENU_SECURITY</menu>
+            <menu link="option=com_sensomcp&amp;view=plugins" view="plugins" img="class:puzzle-piece">COM_SENSOMCP_SUBMENU_PLUGINS</menu>
+        </submenu>
+        <files folder="admin">
+            <folder>services</folder>
+            <folder>src</folder>
+            <folder>sql</folder>
+            <folder>tmpl</folder>
+            <folder>language</folder>
+            <filename>access.xml</filename>
+            <filename>config.xml</filename>
+            <filename>CHANGELOG.md</filename>
+        </files>
+        <languages folder="admin/language">
+            <language tag="fr-FR">fr-FR/com_sensomcp.ini</language>
+            <language tag="fr-FR">fr-FR/com_sensomcp.sys.ini</language>
+            <language tag="en-GB">en-GB/com_sensomcp.ini</language>
+            <language tag="en-GB">en-GB/com_sensomcp.sys.ini</language>
+            <language tag="de-DE">de-DE/com_sensomcp.ini</language>
+            <language tag="de-DE">de-DE/com_sensomcp.sys.ini</language>
+            <language tag="es-ES">es-ES/com_sensomcp.ini</language>
+            <language tag="es-ES">es-ES/com_sensomcp.sys.ini</language>
+            <language tag="it-IT">it-IT/com_sensomcp.ini</language>
+            <language tag="it-IT">it-IT/com_sensomcp.sys.ini</language>
+            <language tag="nl-NL">nl-NL/com_sensomcp.ini</language>
+            <language tag="nl-NL">nl-NL/com_sensomcp.sys.ini</language>
+            <language tag="pt-BR">pt-BR/com_sensomcp.ini</language>
+            <language tag="pt-BR">pt-BR/com_sensomcp.sys.ini</language>
+        </languages>
+    </administration>
+
+    <api>
+        <files folder="api">
+            <folder>src</folder>
+        </files>
+    </api>
+
+    <media destination="com_sensomcp" folder="media">
+        <folder>css</folder>
+        <folder>images</folder>
+    </media>
+</extension>

@@ -1,0 +1,12 @@
+/* @name Océan @mode dark */
+.sensomcp-ui {
+    --smcp-bg: #0a1620;
+    --smcp-surface: #0f2130;
+    --smcp-surface-2: #16303f;
+    --smcp-text: #dbeaf2;
+    --smcp-muted: #83a1b2;
+    --smcp-border: #1d3646;
+    --smcp-accent: #22b8cf;
+    --smcp-accent-contrast: #04141a;
+    color-scheme: dark;
+}

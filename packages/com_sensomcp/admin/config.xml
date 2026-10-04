@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <fieldset name="interface" label="COM_SENSOMCP_CONFIG_INTERFACE">
+        <field
+            name="theme"
+            type="theme"
+            addfieldprefix="Sensomedia\Component\Sensomcp\Administrator\Field"
+            label="COM_SENSOMCP_THEME_LABEL"
+            description="COM_SENSOMCP_THEME_DESC"
+            default=""
+            validate="options" />
+    </fieldset>
+
+    <fieldset name="security" label="COM_SENSOMCP_CONFIG_SECURITY">
+        <field
+            name="readonly"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_SENSOMCP_READONLY_LABEL"
+            description="COM_SENSOMCP_READONLY_DESC"
+            default="0">
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+
+        <field
+            name="ratelimit_enabled"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_SENSOMCP_RATELIMIT_ENABLED_LABEL"
+            description="COM_SENSOMCP_RATELIMIT_ENABLED_DESC"
+            default="1">
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+
+        <field
+            name="ratelimit_max"
+            type="number"
+            label="COM_SENSOMCP_RATELIMIT_MAX_LABEL"
+            description="COM_SENSOMCP_RATELIMIT_MAX_DESC"
+            default="120"
+            min="1"
+            showon="ratelimit_enabled:1" />
+
+        <field
+            name="ratelimit_window"
+            type="number"
+            label="COM_SENSOMCP_RATELIMIT_WINDOW_LABEL"
+            description="COM_SENSOMCP_RATELIMIT_WINDOW_DESC"
+            default="60"
+            min="1"
+            showon="ratelimit_enabled:1" />
+
+        <field
+            name="debug"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_SENSOMCP_DEBUG_LABEL"
+            description="COM_SENSOMCP_DEBUG_DESC"
+            default="0">
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+
+        <!--
+            Arrêt d'urgence : réglable ICI (Options) OU via le bouton de la vue
+            « Plugins et sécurité » — les deux écrivent le même param. DOIT rester
+            déclaré (sinon un save d'Options effacerait la valeur, qui ne persiste
+            que les champs déclarés).
+        -->
+        <field
+            name="emergency_stop"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_SENSOMCP_EMERGENCY_LABEL"
+            description="COM_SENSOMCP_EMERGENCY_DESC"
+            default="0">
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+
+        <!-- Horodatage interne de révocation OAuth (posé par le bouton) — pas un
+             réglage éditable, mais déclaré pour survivre aux saves d'Options. -->
+        <field name="oauth_revoke_before" type="hidden" default="0" />
+    </fieldset>
+
+    <fieldset name="license" label="COM_SENSOMCP_CONFIG_LICENSE">
+        <field
+            name="license_key"
+            type="text"
+            label="COM_SENSOMCP_LICENSE_KEY_LABEL"
+            description="COM_SENSOMCP_LICENSE_KEY_DESC"
+            default=""
+            autocomplete="off" />
+    </fieldset>
+
+    <fieldset name="permissions" label="JCONFIG_PERMISSIONS_LABEL">
+        <field
+            name="rules"
+            type="rules"
+            label="JCONFIG_PERMISSIONS_LABEL"
+            translate_label="false"
+            filter="rules"
+            validate="rules"
+            component="com_sensomcp"
+            section="component" />
+    </fieldset>
+</config>

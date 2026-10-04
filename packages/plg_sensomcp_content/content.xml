@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="plugin" group="sensomcp" method="upgrade">
+    <name>plg_sensomcp_content</name>
+    <author>Fred Oliver</author>
+    <authorEmail>fred@sensomedia.com</authorEmail>
+    <authorUrl>https://sensomedia.com</authorUrl>
+    <copyright>(C) 2026 Sensomedia. All rights reserved.</copyright>
+    <license>GNU General Public License version 2 or later</license>
+    <version>1.2.9</version>
+    <creationDate>2026-08-20</creationDate>
+    <description>PLG_SENSOMCP_CONTENT_XML_DESCRIPTION</description>
+
+    <scriptfile>script.php</scriptfile>
+
+    <namespace path="src">Sensomedia\Plugin\Sensomcp\Content</namespace>
+
+    <files>
+        <folder plugin="content">services</folder>
+        <folder>src</folder>
+    </files>
+
+    <languages>
+        <language tag="fr-FR">language/fr-FR/plg_sensomcp_content.ini</language>
+        <language tag="fr-FR">language/fr-FR/plg_sensomcp_content.sys.ini</language>
+        <language tag="en-GB">language/en-GB/plg_sensomcp_content.ini</language>
+        <language tag="en-GB">language/en-GB/plg_sensomcp_content.sys.ini</language>
+        <language tag="de-DE">language/de-DE/plg_sensomcp_content.ini</language>
+        <language tag="de-DE">language/de-DE/plg_sensomcp_content.sys.ini</language>
+        <language tag="es-ES">language/es-ES/plg_sensomcp_content.ini</language>
+        <language tag="es-ES">language/es-ES/plg_sensomcp_content.sys.ini</language>
+        <language tag="it-IT">language/it-IT/plg_sensomcp_content.ini</language>
+        <language tag="it-IT">language/it-IT/plg_sensomcp_content.sys.ini</language>
+        <language tag="nl-NL">language/nl-NL/plg_sensomcp_content.ini</language>
+        <language tag="nl-NL">language/nl-NL/plg_sensomcp_content.sys.ini</language>
+        <language tag="pt-BR">language/pt-BR/plg_sensomcp_content.ini</language>
+        <language tag="pt-BR">language/pt-BR/plg_sensomcp_content.sys.ini</language>
+    </languages>
+
+    <config>
+        <fields name="params">
+            <fieldset name="basic">
+                <field
+                    name="allow_write"
+                    type="radio"
+                    layout="joomla.form.field.radio.switcher"
+                    label="PLG_SENSOMCP_CONTENT_ALLOW_WRITE_LABEL"
+                    description="PLG_SENSOMCP_CONTENT_ALLOW_WRITE_DESC"
+                    default="1">
+                    <option value="0">JNO</option>
+                    <option value="1">JYES</option>
+                </field>
+
+                <field
+                    name="default_catid"
+                    type="category"
+                    extension="com_content"
+                    label="PLG_SENSOMCP_CONTENT_DEFAULT_CATID_LABEL"
+                    description="PLG_SENSOMCP_CONTENT_DEFAULT_CATID_DESC"
+                    default="">
+                    <option value="">JNONE</option>
+                </field>
+
+                <field
+                    name="default_state"
+                    type="radio"
+                    layout="joomla.form.field.radio.switcher"
+                    label="PLG_SENSOMCP_CONTENT_DEFAULT_STATE_LABEL"
+                    description="PLG_SENSOMCP_CONTENT_DEFAULT_STATE_DESC"
+                    default="0">
+                    <option value="0">JUNPUBLISHED</option>
+                    <option value="1">JPUBLISHED</option>
+                </field>
+            </fieldset>
+        </fields>
+    </config>
+</extension>

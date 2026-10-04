@@ -1,0 +1,12 @@
+/* @name Sauge @mode light */
+.sensomcp-ui {
+    --smcp-bg: #eef3ee;
+    --smcp-surface: #ffffff;
+    --smcp-surface-2: #e3ece4;
+    --smcp-text: #212a24;
+    --smcp-muted: #66705f;
+    --smcp-border: #d9e5db;
+    --smcp-accent: #3f875f;
+    --smcp-accent-contrast: #ffffff;
+    color-scheme: light;
+}

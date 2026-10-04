@@ -1,0 +1,12 @@
+/* @name Ardoise @mode dark */
+.sensomcp-ui {
+    --smcp-bg: #0f141a;
+    --smcp-surface: #171e26;
+    --smcp-surface-2: #1e2833;
+    --smcp-text: #e6eaef;
+    --smcp-muted: #99a6b2;
+    --smcp-border: #27303c;
+    --smcp-accent: #4c8dff;
+    --smcp-accent-contrast: #0a0e13;
+    color-scheme: dark;
+}

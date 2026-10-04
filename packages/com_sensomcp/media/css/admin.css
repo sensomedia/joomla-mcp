@@ -1,0 +1,440 @@
+/**
+ * Senso MCP — base d'habillage de l'admin du composant.
+ * Toujours chargée sur les vues Dashboard / Réglages / Sécurité.
+ *
+ * Tout est porté par des VARIABLES CSS sur le wrapper `.sensomcp-ui`. Un thème
+ * = un fichier CSS qui ne fait QUE redéfinir ces variables (voir css/themes/).
+ * Sans thème (« normal »), les valeurs par défaut ci-dessous donnent un rendu
+ * clair neutre proche de l'admin Joomla, légèrement poli.
+ */
+
+.sensomcp-ui {
+    /* Palette (surchargée par les fichiers de thème) */
+    --smcp-bg: transparent;
+    --smcp-surface: #ffffff;
+    --smcp-surface-2: #f2f4f7;
+    --smcp-text: #1b2027;
+    --smcp-muted: #606a76;
+    --smcp-border: #e3e7ec;
+    --smcp-accent: #1a6cff;
+    --smcp-accent-contrast: #ffffff;
+
+    --smcp-radius: 12px;
+    --smcp-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px -16px rgba(16, 24, 40, .22);
+
+    position: relative;
+    background: var(--smcp-bg);
+    color: var(--smcp-text);
+}
+
+/* Logo cliquable (nouvelle fenêtre) dans le coin supérieur droit du conteneur
+   (variante sombre plus bas). */
+.sensomcp-ui .sensomcp-logo {
+    position: absolute;
+    top: 1rem;
+    right: 1.25rem;
+    display: block;
+    width: 160px;
+    height: 32px;
+    background: url("../images/logo-senso-mcp.svg") no-repeat right center / contain;
+    opacity: .85;
+    z-index: 2;
+    transition: opacity .15s ease;
+}
+
+.sensomcp-ui .sensomcp-logo:hover,
+.sensomcp-ui .sensomcp-logo:focus-visible {
+    opacity: 1;
+}
+
+/* Supprime l'icône « lien externe » qu'Atum ajoute aux liens target=_blank. */
+.sensomcp-ui .sensomcp-logo::before,
+.sensomcp-ui .sensomcp-logo::after {
+    content: none !important;
+    display: none !important;
+}
+
+/* Contextes sombres (thème Senso sombre) : logo clair + pastille de switch claire. */
+.sensomcp-ui[data-smcp-mode="dark"] .sensomcp-logo {
+    background-image: url("../images/logo-senso-mcp-dark.svg");
+}
+
+.sensomcp-ui[data-smcp-mode="dark"] {
+    --bs-form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='rgba%28255,255,255,0.5%29'/%3e%3c/svg%3e");
+    color-scheme: dark;
+}
+
+/* Canevas rempli uniquement quand un thème est choisi (normal = inchangé).
+   Le padding vient de l'utilitaire p-4 posé sur le conteneur. */
+.sensomcp-ui[data-smcp-theme] {
+    min-height: calc(100vh - 150px);
+    border-radius: var(--smcp-radius);
+}
+
+/*
+ * Thème « Normal » (aucun thème Senso choisi) : suit le MODE SOMBRE d'Atum
+ * (Bootstrap 5.3 pose [data-bs-theme=dark]). Sans ça, le composant resterait en
+ * palette claire (texte sombre) sur le fond sombre d'Atum → illisible.
+ * Ne s'applique pas si un thème Senso est actif (:not([data-smcp-theme])).
+ */
+[data-bs-theme="dark"] .sensomcp-ui:not([data-smcp-theme]) {
+    --smcp-surface: #1e232b;
+    --smcp-surface-2: #272d36;
+    --smcp-text: #e6eaef;
+    --smcp-muted: #9aa4b0;
+    --smcp-border: #333b45;
+    --smcp-accent: #5b9bff;
+    --smcp-accent-contrast: #0a0e13;
+    /* Pastille de switch claire (Bootstrap la fournit en dark, mais on la force
+       ici pour couvrir tous les cas). */
+    --bs-form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='rgba%28255,255,255,0.5%29'/%3e%3c/svg%3e");
+    color-scheme: dark;
+}
+
+[data-bs-theme="dark"] .sensomcp-ui:not([data-smcp-theme]) .sensomcp-logo {
+    background-image: url("../images/logo-senso-mcp-dark.svg");
+}
+
+/* ---- Typo / couleurs génériques ---- */
+.sensomcp-ui,
+.sensomcp-ui p,
+.sensomcp-ui label,
+.sensomcp-ui li,
+.sensomcp-ui dt,
+.sensomcp-ui dd,
+.sensomcp-ui h1,
+.sensomcp-ui h2,
+.sensomcp-ui h3,
+.sensomcp-ui h4,
+.sensomcp-ui h5 {
+    color: var(--smcp-text);
+}
+
+.sensomcp-ui .text-muted,
+.sensomcp-ui .small.text-muted {
+    color: var(--smcp-muted) !important;
+}
+
+.sensomcp-ui a {
+    color: var(--smcp-accent);
+}
+
+.sensomcp-ui hr {
+    border-color: var(--smcp-border);
+    opacity: 1;
+}
+
+/* ---- Onglets ---- */
+.sensomcp-ui .nav-tabs {
+    border-bottom: 1px solid var(--smcp-border);
+    gap: .25rem;
+}
+
+.sensomcp-ui .nav-tabs .nav-link {
+    color: var(--smcp-muted);
+    border: 0;
+    border-radius: 9px 9px 0 0;
+    padding: .55rem 1rem;
+    font-weight: 600;
+}
+
+.sensomcp-ui .nav-tabs .nav-link:hover {
+    color: var(--smcp-text);
+    background: var(--smcp-surface-2);
+}
+
+.sensomcp-ui .nav-tabs .nav-link.active {
+    color: var(--smcp-accent);
+    background: var(--smcp-surface);
+    border-bottom: 2px solid var(--smcp-accent);
+}
+
+/* ---- Mobile : logo sous les onglets (centré), onglets compacts sur 1 ligne ---- */
+@media (max-width: 575.98px) {
+    /* Plus de padding du conteneur principal (p-4 → 0) pour gagner en largeur.
+       !important car l'utilitaire Bootstrap .p-4 est lui-même !important. */
+    .sensomcp-ui {
+        padding: 0 !important;
+    }
+
+    .sensomcp-ui .nav-tabs {
+        justify-content: center;
+        flex-wrap: nowrap;
+    }
+
+    .sensomcp-ui .nav-tabs .nav-link {
+        padding: 0.5em;
+        font-size: 12px;
+    }
+
+    .sensomcp-ui .sensomcp-logo {
+        position: static;
+        margin: 0 auto 1rem;
+        width: 140px;
+        max-width: 60%;
+        background-position: center;
+    }
+}
+
+/* ---- Cartes / panneaux ---- */
+.sensomcp-ui .card {
+    background: var(--smcp-surface);
+    border: 1px solid var(--smcp-border);
+    border-radius: var(--smcp-radius);
+    box-shadow: var(--smcp-shadow);
+    color: var(--smcp-text);
+    /* Détoure les enfants (dégradés de card-body, header) selon le rayon —
+       gère les cartes avec OU sans en-tête (ex. tuiles-compteurs). */
+    overflow: hidden;
+}
+
+.sensomcp-ui .card-header {
+    background: transparent;
+    border-bottom: 1px solid var(--smcp-border);
+    color: var(--smcp-text);
+    font-weight: 600;
+}
+
+/* Léger dégradé + halo d'accent sur les corps de carte (« fun », theme-aware). */
+.sensomcp-ui .card-body {
+    background:
+        radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--smcp-accent) 8%, transparent), transparent 55%),
+        linear-gradient(180deg, var(--smcp-surface) 0%, var(--smcp-surface-2) 100%);
+}
+
+/* Tuiles-compteurs (.card.text-center) : contraste renforcé + chiffre plus fort. */
+.sensomcp-ui .card.text-center {
+    border: 1px solid color-mix(in srgb, var(--smcp-accent) 22%, var(--smcp-border));
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 12px 26px -18px color-mix(in srgb, var(--smcp-accent) 55%, transparent);
+}
+
+.sensomcp-ui .card.text-center .card-body {
+    background:
+        radial-gradient(130% 120% at 50% 0%, color-mix(in srgb, var(--smcp-accent) 14%, transparent), transparent 65%),
+        linear-gradient(180deg, var(--smcp-surface-2) 0%, var(--smcp-surface) 100%);
+}
+
+.sensomcp-ui .card.text-center .fs-2 {
+    font-size: 2.15rem !important;
+    line-height: 1.1;
+    letter-spacing: -.02em;
+}
+
+/*
+ * Contraste des chiffres de tuiles : les couleurs Bootstrap par défaut
+ * (text-primary/info/warning…) sont trop sombres sur fond dark (ou trop pâles
+ * sur fond clair). Le total prend l'accent du thème (pensé pour contraster) ;
+ * les autres = mélange « teinte sémantique + couleur de texte » → s'éclaircit
+ * en sombre, s'assombrit en clair, tout en gardant le sens (info/succès/…).
+ */
+.sensomcp-ui .card.text-center .fs-2.text-primary {
+    color: var(--smcp-accent) !important;
+}
+
+.sensomcp-ui .card.text-center .fs-2.text-info {
+    color: color-mix(in srgb, #0dcaf0 62%, var(--smcp-text)) !important;
+}
+
+.sensomcp-ui .card.text-center .fs-2.text-success {
+    color: color-mix(in srgb, #16a34a 62%, var(--smcp-text)) !important;
+}
+
+.sensomcp-ui .card.text-center .fs-2.text-warning {
+    color: color-mix(in srgb, #f59e0b 66%, var(--smcp-text)) !important;
+}
+
+.sensomcp-ui .card.text-center .fs-2.text-danger {
+    color: color-mix(in srgb, #ef4444 66%, var(--smcp-text)) !important;
+}
+
+.sensomcp-ui .card.text-center .fs-2.text-secondary {
+    color: var(--smcp-text) !important;
+    opacity: .8;
+}
+
+.sensomcp-ui .bg-body-secondary,
+.sensomcp-ui .bg-light {
+    background: var(--smcp-surface-2) !important;
+    color: var(--smcp-text) !important;
+}
+
+/* ---- Listes ---- */
+.sensomcp-ui .list-group-item {
+    background: var(--smcp-surface);
+    border-color: var(--smcp-border);
+    color: var(--smcp-text);
+}
+
+/* ---- Tables ---- */
+.sensomcp-ui .table {
+    color: var(--smcp-text);
+}
+
+.sensomcp-ui .table > :not(caption) > * > * {
+    background: transparent;
+    color: var(--smcp-text);
+    border-color: var(--smcp-border);
+}
+
+.sensomcp-ui .table-sm > :not(caption) > * > * {
+    padding: .3rem 1rem;
+}
+
+/* ---- Accordéon (vue Sécurité) ---- */
+.sensomcp-ui .accordion-item {
+    background: var(--smcp-surface);
+    border-color: var(--smcp-border);
+    color: var(--smcp-text);
+}
+
+.sensomcp-ui .accordion-button {
+    background: var(--smcp-surface-2);
+    color: var(--smcp-text);
+}
+
+.sensomcp-ui .accordion-button:not(.collapsed) {
+    background: var(--smcp-surface-2);
+    color: var(--smcp-accent);
+    box-shadow: inset 0 -1px 0 var(--smcp-border);
+}
+
+.sensomcp-ui .accordion-button::after {
+    filter: grayscale(1) opacity(.6);
+}
+
+.sensomcp-ui .accordion-body {
+    background: var(--smcp-surface);
+}
+
+/* ---- Formulaires ---- */
+.sensomcp-ui .form-control,
+.sensomcp-ui .form-select {
+    background: var(--smcp-surface);
+    color: var(--smcp-text);
+    border-color: var(--smcp-border);
+}
+
+.sensomcp-ui .form-control::placeholder {
+    color: var(--smcp-muted);
+}
+
+/* Piste translucide dérivée de la couleur de texte → visible sur fond clair
+   ET sombre (thème Senso sombre ou mode sombre d'Atum). */
+.sensomcp-ui .form-check-input {
+    background-color: color-mix(in srgb, var(--smcp-text) 18%, transparent);
+    border-color: color-mix(in srgb, var(--smcp-text) 35%, transparent);
+}
+
+.sensomcp-ui .form-check-input:checked {
+    background-color: var(--smcp-accent);
+    border-color: var(--smcp-accent);
+}
+
+/* ---- Code ---- */
+.sensomcp-ui pre,
+.sensomcp-ui code {
+    background: var(--smcp-surface-2);
+    color: var(--smcp-text);
+    border-radius: 8px;
+}
+
+.sensomcp-ui pre {
+    padding: .8rem 1rem;
+    border: 1px solid var(--smcp-border);
+}
+
+/* ---- Boutons ---- */
+.sensomcp-ui .btn-primary {
+    background: var(--smcp-accent);
+    border-color: var(--smcp-accent);
+    color: var(--smcp-accent-contrast);
+}
+
+.sensomcp-ui .btn-outline-secondary {
+    color: var(--smcp-muted);
+    border-color: var(--smcp-border);
+}
+
+.sensomcp-ui .btn-outline-secondary:hover {
+    background: var(--smcp-surface-2);
+    color: var(--smcp-text);
+}
+
+/*
+ * Les badges sémantiques gardent leur COULEUR DE FOND Bootstrap. Leur texte est
+ * forcé selon le fond pour rester lisible quel que soit le thème / le mode sombre
+ * d'Atum. bg-warning (jaune) et bg-light (gris clair) = texte sombre ; les autres
+ * (dont bg-info, rendu en bleu foncé par Atum) = texte blanc.
+ */
+.sensomcp-ui .badge.bg-warning,
+.sensomcp-ui .badge.bg-light {
+    color: #14181d !important;
+}
+
+.sensomcp-ui .badge.bg-info,
+.sensomcp-ui .badge.bg-primary,
+.sensomcp-ui .badge.bg-secondary,
+.sensomcp-ui .badge.bg-success,
+.sensomcp-ui .badge.bg-danger,
+.sensomcp-ui .badge.bg-dark {
+    color: #ffffff !important;
+}
+
+/* ==== Écran « Plugins & outils » : améliorations UI ==== */
+
+/* Boutons outline lisibles en contexte sombre (le « Configurer » disparaissait). */
+.sensomcp-ui[data-smcp-mode="dark"] .btn-outline-primary,
+[data-bs-theme="dark"] .sensomcp-ui:not([data-smcp-theme]) .btn-outline-primary {
+    color: #6ea8fe;
+    border-color: #6ea8fe;
+}
+.sensomcp-ui[data-smcp-mode="dark"] .btn-outline-primary:hover,
+[data-bs-theme="dark"] .sensomcp-ui:not([data-smcp-theme]) .btn-outline-primary:hover {
+    color: #0b1020;
+    background-color: #6ea8fe;
+}
+.sensomcp-ui[data-smcp-mode="dark"] .btn-outline-secondary,
+[data-bs-theme="dark"] .sensomcp-ui:not([data-smcp-theme]) .btn-outline-secondary {
+    color: #ced4da;
+    border-color: #6c757d;
+}
+.sensomcp-ui[data-smcp-mode="dark"] .btn-outline-secondary:hover,
+[data-bs-theme="dark"] .sensomcp-ui:not([data-smcp-theme]) .btn-outline-secondary:hover {
+    color: #0b1020;
+    background-color: #ced4da;
+}
+.sensomcp-ui[data-smcp-mode="dark"] .btn-outline-danger,
+[data-bs-theme="dark"] .sensomcp-ui:not([data-smcp-theme]) .btn-outline-danger {
+    color: #ea868f;
+    border-color: #ea868f;
+}
+.sensomcp-ui[data-smcp-mode="dark"] .btn-outline-danger:hover,
+[data-bs-theme="dark"] .sensomcp-ui:not([data-smcp-theme]) .btn-outline-danger:hover {
+    color: #0b1020;
+    background-color: #ea868f;
+}
+
+/* Largeur mini du bouton Configurer. */
+.sensomcp-ui .smcp-configure {
+    min-width: 130px;
+}
+
+/* Les 2 premières colonnes ouvrent l'accordéon → curseur explicite. */
+.sensomcp-ui .smcp-cardbody .smcp-col-toggle .fw-semibold,
+.sensomcp-ui .smcp-cardbody .smcp-col-badges {
+    cursor: pointer;
+}
+
+/* Tablette & mobile : les boutons d'action passent à la ligne, alignés à droite. */
+@media (max-width: 991.98px) {
+    .sensomcp-ui .smcp-actions {
+        width: 100%;
+        justify-content: flex-end;
+        margin-top: .4rem;
+    }
+
+    /* Liste d'outils (accordéon) : masquer la description, trop large sur petit écran. */
+    .sensomcp-ui .smcp-tool-desc {
+        display: none;
+    }
+}

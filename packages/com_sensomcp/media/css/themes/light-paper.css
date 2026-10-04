@@ -1,0 +1,12 @@
+/* @name Papier @mode light */
+.sensomcp-ui {
+    --smcp-bg: #f4f2ec;
+    --smcp-surface: #fffefb;
+    --smcp-surface-2: #ece8de;
+    --smcp-text: #2a2824;
+    --smcp-muted: #77726a;
+    --smcp-border: #e2ddd0;
+    --smcp-accent: #2f7d6b;
+    --smcp-accent-contrast: #ffffff;
+    color-scheme: light;
+}

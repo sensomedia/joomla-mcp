@@ -1,0 +1,12 @@
+/* @name Azur @mode light */
+.sensomcp-ui {
+    --smcp-bg: #eef3f8;
+    --smcp-surface: #ffffff;
+    --smcp-surface-2: #e3ebf3;
+    --smcp-text: #1c2530;
+    --smcp-muted: #647082;
+    --smcp-border: #d8e2ec;
+    --smcp-accent: #2563eb;
+    --smcp-accent-contrast: #ffffff;
+    color-scheme: light;
+}

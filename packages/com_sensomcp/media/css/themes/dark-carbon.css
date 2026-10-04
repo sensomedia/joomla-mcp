@@ -1,0 +1,12 @@
+/* @name Carbone @mode dark */
+.sensomcp-ui {
+    --smcp-bg: #121214;
+    --smcp-surface: #1c1c1f;
+    --smcp-surface-2: #26262a;
+    --smcp-text: #ececed;
+    --smcp-muted: #9a9aa0;
+    --smcp-border: #2e2e33;
+    --smcp-accent: #ff8a3d;
+    --smcp-accent-contrast: #1a1206;
+    color-scheme: dark;
+}

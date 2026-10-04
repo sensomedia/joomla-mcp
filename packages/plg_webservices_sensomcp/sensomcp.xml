@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="plugin" group="webservices" method="upgrade">
+    <name>plg_webservices_sensomcp</name>
+    <author>Fred Oliver</author>
+    <authorEmail>fred@sensomedia.com</authorEmail>
+    <authorUrl>https://sensomedia.com</authorUrl>
+    <copyright>(C) 2026 Sensomedia. All rights reserved.</copyright>
+    <license>GNU General Public License version 2 or later</license>
+    <version>1.2.9</version>
+    <creationDate>2026-08-19</creationDate>
+    <description>PLG_WEBSERVICES_SENSOMCP_XML_DESCRIPTION</description>
+
+    <scriptfile>script.php</scriptfile>
+
+    <namespace path="src">Sensomedia\Plugin\WebServices\Sensomcp</namespace>
+
+    <files>
+        <folder plugin="sensomcp">services</folder>
+        <folder>src</folder>
+    </files>
+
+    <languages>
+        <language tag="fr-FR">language/fr-FR/plg_webservices_sensomcp.ini</language>
+        <language tag="fr-FR">language/fr-FR/plg_webservices_sensomcp.sys.ini</language>
+        <language tag="en-GB">language/en-GB/plg_webservices_sensomcp.ini</language>
+        <language tag="en-GB">language/en-GB/plg_webservices_sensomcp.sys.ini</language>
+    </languages>
+</extension>

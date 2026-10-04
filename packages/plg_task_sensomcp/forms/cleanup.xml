@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<form>
+    <fields name="params">
+        <fieldset name="basic">
+            <field
+                name="log_retention_days"
+                type="number"
+                label="PLG_TASK_SENSOMCP_CLEANUP_LOG_RETENTION_LABEL"
+                description="PLG_TASK_SENSOMCP_CLEANUP_LOG_RETENTION_DESC"
+                default="30"
+                min="0"
+                filter="integer"
+            />
+        </fieldset>
+    </fields>
+</form>
