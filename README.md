@@ -58,7 +58,7 @@ A step-by-step guide is available in the
 ## Going further
 
 Additional plugins add tools for custom fields, media, menus, SEO, multilingual sites, modules, templates,
-users, extensions and YooTheme Pro. See <https://www.sensomcp.com/en/pricing>.
+users, extensions and YOOtheme Pro. See <https://www.sensomcp.com/en/pricing>.
 
 ## Support
 
