@@ -1,5 +1,19 @@
 # Senso MCP — Changelog
 
+## 1.2.12 - 2026-10-11
+### Fixed
+- ChatGPT connector: the connection completed (OAuth, token) but no tool was ever listed. Since 1.2.0 the server answered the MCP 2026-07-28 `server/discover` probe with a discovery result that only advertised the handshake protocol 2025-06-18; ChatGPT then treated the server as "modern", found no mutually supported version and stopped before `tools/list` (Claude tolerated it). The probe is now answered with "method not found" (-32601), the standard reply of a handshake-based server, which makes every dual-era client fall back to `initialize` as expected. The probe is no longer written to the request log.
+
+## 1.2.11 - 2026-10-08
+### Added
+- Licence section of the dashboard: when the store cannot be reached, the technical cause (cURL/TLS error, HTTP status, non-JSON reply) is now shown under the "Store temporarily unreachable" message and written to `administrator/logs/com_sensomcp.log.php`, so an outbound firewall or outdated CA bundle on the hosting can be diagnosed.
+
+## 1.2.10 - 2026-10-05
+### Added
+- Custom field values on categories: `get_category` returns `fields`, `create_category` / `update_category` accept a `fields` object, and the new `list_category_fields` tool lists the fields applicable to a category (context `com_content.categories`).
+### Fixed
+- Custom field values with a structure (subform rows, structured third-party types) are now stored as Joomla does (JSON) instead of being broken into "Array" rows, and are returned decoded by `get_article` / `get_category`.
+
 ## 1.2.9 - 2026-10-03
 ### Fixed
 - `create_article` / `update_article` now accept the article dates `created`, `publish_up` and `publish_down` (ISO 8601; a value without UTC offset is read in the site timezone). `publish_up`/`publish_down` can be cleared with null.
@@ -167,7 +181,7 @@
 ## 1.0.0-beta6 - 2026-08-26
 ### Added / Changed (YOOtheme plugin)
 - **YOOtheme** plugin extended (37 tools) following real-world feedback: field binding reworked
-  on YooTheme's native `source` format (prefix/suffix filters, hide-if-empty, source
+  on YOOtheme's native `source` format (prefix/suffix filters, hide-if-empty, source
   article/#node/#parent), **repeatable sources** (subforms / collection fields), **composed
   sources** with if/if-else conditions, and **multi-field visibility conditions** (AND/OR/custom
   expression) — Essentials extended functions.
@@ -176,11 +190,11 @@
 
 ## 1.0.0-beta5 - 2026-08-26
 ### Added
-- New **YOOtheme** plugin (paid, full bundle): 34 tools to drive YooTheme Pro 5 over MCP —
+- New **YOOtheme** plugin (paid, full bundle): 34 tools to drive YOOtheme Pro 5 over MCP —
   templates (layout models per category/tag), builder pages (articles), dynamic mapped fields,
-  **official YooTheme Library** (import pro designs + images), full customizer **settings**,
+  **official YOOtheme Library** (import pro designs + images), full customizer **settings**,
   builder **mega-menus/dropdowns**, **builder modules**, and saved My Layouts/Presets. Safe
-  writing throughout (lock + snapshots + re-read). YooTheme Pro 5 required; Essentials optional.
+  writing throughout (lock + snapshots + re-read). YOOtheme Pro 5 required; Essentials optional.
 
 ## 1.0.0-beta4 - 2026-08-25
 ### Fixed

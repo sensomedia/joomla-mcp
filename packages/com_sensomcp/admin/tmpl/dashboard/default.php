@@ -281,7 +281,18 @@ foreach ($this->perDay as $day => $count) {
         keyInput.dataset.original = keyInput.value;
 
         if (!st.key_set) { statusEl.textContent = L.free; return; }
-        if (st.unreachable) { statusEl.textContent = L.unreachable; return; }
+        if (st.unreachable) {
+            statusEl.textContent = L.unreachable;
+            // Cause technique (cURL/HTTP) : affichée en clair pour l'admin, consignée dans
+            // administrator/logs/com_sensomcp.log.php.
+            if (st.detail) {
+                var code = document.createElement('code');
+                code.className = 'd-block mt-1 text-danger';
+                code.textContent = st.detail;
+                statusEl.appendChild(code);
+            }
+            return;
+        }
         if (st.invalid) { statusEl.innerHTML = '<span class="text-danger">' + L.invalid + '</span>'; return; }
 
         var host = st.host || '';

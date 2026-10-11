@@ -98,7 +98,15 @@ class LicenseController extends BaseController
         $v = LicenseClient::verify($key, $host);
 
         if ($v === null) {
-            return $base + ['unreachable' => true, 'effective_tier' => 'unknown', 'action' => 'none', 'candidates' => []];
+            // Cause technique (erreur cURL, HTTP, non-JSON) pour l'admin : sans elle,
+            // un hébergement qui bloque la sortie HTTPS est indiagnosticable.
+            return $base + [
+                'unreachable'    => true,
+                'detail'         => LicenseClient::lastError(),
+                'effective_tier' => 'unknown',
+                'action'         => 'none',
+                'candidates'     => [],
+            ];
         }
 
         if (empty($v['ok']) && ($v['error'] ?? '') === 'invalid_key') {

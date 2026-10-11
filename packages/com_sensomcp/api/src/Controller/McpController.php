@@ -132,7 +132,9 @@ class McpController extends BaseController
 
             $method = (string) ($message['method'] ?? '');
 
-            if ($method !== '') {
+            // La sonde `server/discover` reçoit -32601 par conception (serveur à
+            // handshake, cf. Server::handle()) : ce n'est pas une erreur à journaliser.
+            if ($method !== '' && $method !== 'server/discover') {
                 $tool    = $method === 'tools/call' ? (string) ($message['params']['name'] ?? '') : '';
                 $isError = isset($response['error']) || (($response['result']['isError'] ?? false) === true);
                 $err     = null;

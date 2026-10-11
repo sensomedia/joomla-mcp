@@ -13,7 +13,9 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 
 /**
  * Dispatcher JSON-RPC 2.0 minimal implémentant les méthodes MCP nécessaires :
- * server/discover, initialize, ping, tools/list, tools/call (+ notifications ignorées).
+ * initialize, ping, tools/list, tools/call, resources/*, prompts/* (+ notifications
+ * ignorées). Protocole à handshake (2025-06-18) : la sonde `server/discover` de
+ * l'ère 2026-07-28 reçoit volontairement -32601 (voir handle()).
  *
  * Serveur volontairement « stateless » (pas de session Mcp-Session-Id) pour
  * maximiser la compatibilité avec l'ensemble des clients MCP.
@@ -48,24 +50,24 @@ class Server
 
         try {
             switch ($method) {
-                // Découverte MCP 2026-07-28 : les clients récents (Claude) l'envoient
-                // avant tout. On répond honnêtement notre version réelle dans
-                // `supportedVersions` : le client négocie alors sur 2025-06-18 et
-                // poursuit avec `initialize`. Sans ce handler → -32601 (bruit de log).
+                // Sonde de découverte MCP 2026-07-28 (« ère moderne », sans
+                // handshake). Les clients bi-ères (Claude, ChatGPT) l'envoient en
+                // premier pour détecter l'ère du serveur : un `DiscoverResult`
+                // signifie « serveur moderne » et le client ne redescend JAMAIS vers
+                // `initialize`. Entre 1.2.0 et 1.2.11 on répondait un DiscoverResult
+                // n'annonçant que 2025-06-18 (version héritée) : Claude tolérait,
+                // ChatGPT s'arrêtait net après la sonde (aucun `tools/list`).
+                // Ce serveur n'implémente que le protocole à handshake : il doit
+                // donc répondre comme n'importe quel serveur hérité, par
+                // « méthode inconnue » (-32601), ce que tout client bi-ère traite
+                // en repliant sur `initialize`.
                 case 'server/discover':
-                    return $this->result($id, [
-                        'resultType'        => 'complete',
-                        'supportedVersions' => [self::DEFAULT_PROTOCOL_VERSION],
-                        'capabilities'      => $this->serverCapabilities(),
-                        '_meta'             => [
-                            'io.modelcontextprotocol/serverInfo' => [
-                                'name'    => $this->serverName,
-                                'version' => $this->serverVersion,
-                            ],
-                        ],
-                        'ttlMs'      => 3600000,
-                        'cacheScope' => 'public',
-                    ]);
+                    return $this->error(
+                        $id,
+                        -32601,
+                        'Method not found: server/discover (legacy MCP server, protocol '
+                        . self::DEFAULT_PROTOCOL_VERSION . ' — start with initialize)'
+                    );
 
                 case 'initialize':
                     return $this->result($id, [

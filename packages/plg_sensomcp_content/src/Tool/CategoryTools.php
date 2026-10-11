@@ -47,13 +47,30 @@ final class CategoryTools
 
         $registry->register(
             'get_category',
-            'Get a com_content category by id (title, alias, parent, path, state, description, language).',
+            'Get a com_content category by id (title, alias, parent, path, state, description, language, url, '
+            . 'fields = custom field values keyed by field name).',
             [
                 'type'       => 'object',
                 'properties' => ['id' => ['type' => 'integer', 'description' => 'Category id.']],
                 'required'   => ['id'],
             ],
             fn (array $a) => $this->getCategory((int) ($a['id'] ?? 0)),
+            'content.read'
+        );
+
+        $registry->register(
+            'list_category_fields',
+            'List the custom fields (com_fields, context com_content.categories) applicable to categories: '
+            . 'name, title, type, group, required, default, options. With category_id, only the fields assigned '
+            . 'to that category (plus unassigned ones). Call this before setting the "fields" argument of '
+            . 'create_category / update_category. For article fields use list_article_fields.',
+            [
+                'type'       => 'object',
+                'properties' => [
+                    'category_id' => ['type' => 'integer', 'description' => 'Category id to filter by assignment (optional).'],
+                ],
+            ],
+            fn (array $a) => $this->listCategoryFields((int) ($a['category_id'] ?? 0)),
             'content.read'
         );
 
@@ -79,6 +96,7 @@ final class CategoryTools
                     'image'           => ['type' => 'string', 'description' => 'Category image: media path or URL.'],
                     'image_alt'       => ['type' => 'string', 'description' => 'Category image alt text.'],
                     'image_alt_empty' => ['type' => 'boolean', 'description' => 'Mark the alt text as intentionally empty (decorative image).'],
+                    'fields'          => self::fieldsSchema(),
                 ],
                 'required'   => ['title'],
             ],
@@ -103,6 +121,7 @@ final class CategoryTools
                     'image'           => ['type' => 'string', 'description' => 'Category image: media path or URL. Empty string removes it.'],
                     'image_alt'       => ['type' => 'string', 'description' => 'Category image alt text.'],
                     'image_alt_empty' => ['type' => 'boolean', 'description' => 'Mark the alt text as intentionally empty (decorative image).'],
+                    'fields'          => self::fieldsSchema(),
                 ],
                 'required'   => ['id'],
             ],
@@ -134,6 +153,27 @@ final class CategoryTools
     private function db(): DatabaseInterface
     {
         return Factory::getContainer()->get(DatabaseInterface::class);
+    }
+
+    /** Valeurs de champs personnalisés du contexte com_content.categories. */
+    private function fields(): FieldsSupport
+    {
+        return new FieldsSupport(FieldsSupport::CATEGORY);
+    }
+
+    private static function fieldsSchema(): array
+    {
+        return [
+            'type'        => 'object',
+            'description' => 'Custom field values keyed by field name (discover with list_category_fields). '
+                . 'Only fields assigned to the category are applied; others are reported as ignored. '
+                . 'Complex values (subform rows, multi-select) are passed as arrays.',
+        ];
+    }
+
+    private function listCategoryFields(int $categoryId): array
+    {
+        return ['context' => FieldsSupport::CATEGORY, 'category_id' => $categoryId, 'fields' => $this->fields()->listFor($categoryId)];
     }
 
     private function model()
@@ -211,7 +251,10 @@ final class CategoryTools
             throw new McpToolException('Category not found: ' . $id);
         }
 
-        return $this->withCategoryUrls($row, $id);
+        $row           = $this->withCategoryUrls($row, $id);
+        $row['fields'] = $this->fields()->valuesFor($id, $id);
+
+        return $row;
     }
 
     /**
@@ -294,9 +337,16 @@ final class CategoryTools
             throw new McpToolException('Create failed: ' . $this->modelErrors($model));
         }
 
-        $catid = (int) $model->getState('category.id');
+        $catid  = (int) $model->getState('category.id');
+        $result = $this->withCategoryUrls(['ok' => true, 'id' => $catid, 'title' => $title], $catid);
 
-        return $this->withCategoryUrls(['ok' => true, 'id' => $catid, 'title' => $title], $catid);
+        // Les champs d'une catégorie sont affectés par catégorie : l'id n'existe
+        // qu'après le save, d'où l'écriture des valeurs a posteriori.
+        if (!empty($a['fields']) && \is_array($a['fields'])) {
+            $result['fields'] = $this->fields()->setValues($catid, $catid, $a['fields']);
+        }
+
+        return $result;
     }
 
     private function updateCategory(array $a): array
@@ -356,7 +406,13 @@ final class CategoryTools
             throw new McpToolException('Update failed: ' . $this->modelErrors($model));
         }
 
-        return $this->withCategoryUrls(['ok' => true, 'id' => $id], $id);
+        $result = $this->withCategoryUrls(['ok' => true, 'id' => $id], $id);
+
+        if (!empty($a['fields']) && \is_array($a['fields'])) {
+            $result['fields'] = $this->fields()->setValues($id, $id, $a['fields']);
+        }
+
+        return $result;
     }
 
     private function deleteCategory(array $a): array

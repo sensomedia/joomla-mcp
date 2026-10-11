@@ -1030,7 +1030,7 @@ final class ArticleTools
         unset($row['urls']);
         $row          += $this->featuredDates($id);
         $row           = $this->withUrls($row, $id);
-        $row['fields'] = $this->fields()->valuesForArticle($id, (int) $row['catid']);
+        $row['fields'] = $this->fields()->valuesFor($id, (int) $row['catid']);
         $row['tags']   = $this->articleTags($id);
 
         return $row;
@@ -1048,7 +1048,7 @@ final class ArticleTools
             throw new McpToolException("Provide 'catid' or 'article_id' to list applicable fields.");
         }
 
-        return ['catid' => $catid, 'fields' => $this->fields()->listForCategory($catid)];
+        return ['catid' => $catid, 'fields' => $this->fields()->listFor($catid)];
     }
 
     private function createArticle(array $a): array
