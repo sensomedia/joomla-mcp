@@ -1,5 +1,10 @@
 # Senso MCP — Changelog
 
+## 1.2.13 - 2026-10-11
+### Fixed
+- `rebuild_jch_cache` / `clear_jch_cache(rebuild: true)` refused to run on JCH Optimize **9.4.2 Pro** with "Rebuild (recache) requires JCH Optimize Pro". JCH 9.4.2 dropped the `JCH_PRO` constant in favour of an `EditionInterface` service; the Pro edition is now detected through that service, with the constant kept as a fallback for older JCH versions.
+- `rebuild_jch_cache` reported `started: true` on JCH 9.4.2 while nothing was rebuilt: JCH 9.4.2 added a single-use nonce to the signature of its recache endpoint, which rejected our ping with HTTP 403, and the tool never read the reply. The ping now uses JCH's own `RecacheTrigger` helper when present (older JCH versions keep the previous signature), and the tool reads the HTTP status: 202 = accepted, 409 = a recache is already running, anything else falls back to the background CLI and is reported in `web_ping`.
+
 ## 1.2.12 - 2026-10-11
 ### Fixed
 - ChatGPT connector: the connection completed (OAuth, token) but no tool was ever listed. Since 1.2.0 the server answered the MCP 2026-07-28 `server/discover` probe with a discovery result that only advertised the handshake protocol 2025-06-18; ChatGPT then treated the server as "modern", found no mutually supported version and stopped before `tools/list` (Claude tolerated it). The probe is now answered with "method not found" (-32601), the standard reply of a handshake-based server, which makes every dual-era client fall back to `initialize` as expected. The probe is no longer written to the request log.

@@ -461,7 +461,7 @@ final class SiteTools
         return (int) $db->setQuery($q)->loadResult() > 0;
     }
 
-    /** Boot du composant JCH (autoloading + constante JCH_PRO) → ComponentInterface. */
+    /** Boot du composant JCH (autoloading + constante JCH_PRO sur JCH ≤ 9.4.1) → ComponentInterface. */
     private function bootJch()
     {
         return Factory::getApplication()->bootComponent('com_jchoptimize');
@@ -480,9 +480,32 @@ final class SiteTools
         return $cf::getInstance(Factory::getContainer());
     }
 
+    /**
+     * Édition Pro de JCH ?
+     *
+     * JCH ≥ 9.4.2 n'a plus de constante JCH_PRO : l'édition est un service du
+     * conteneur (`JchOptimize\Core\Build\EditionInterface`, implémenté par
+     * `Administrator\Service\Edition::isPro()`). On l'interroge en premier et on
+     * garde la constante en repli pour les versions antérieures.
+     */
     private function jchIsPro(): bool
     {
         $this->bootJch();
+
+        try {
+            // Clé du conteneur = FQCN SANS backslash de tête (comme ::class).
+            $iface = 'JchOptimize\\Core\\Build\\EditionInterface';
+
+            if (interface_exists($iface)) {
+                $edition = $this->jchContainer()->get($iface);
+
+                if (\is_object($edition) && method_exists($edition, 'isPro')) {
+                    return (bool) $edition->isPro();
+                }
+            }
+        } catch (\Throwable) {
+            // Version sans ce service : repli sur la constante.
+        }
 
         return \defined('JCH_PRO') && \constant('JCH_PRO') && \constant('JCH_PRO') !== '0';
     }
@@ -646,13 +669,31 @@ final class SiteTools
         //    « Reconstruire le cache » (JCH UtilityController::pingRecacheAsync). Ne
         //    dépend NI d'exec NI d'un binaire PHP visible (insensible à open_basedir),
         //    et ne requiert PAS le plugin Console (le crawl tourne via ReCacheModel::reCache()).
-        if ($this->pingRecacheAsync()) {
+        $status = $this->pingRecacheAsync();
+
+        if ($status === 202) {
             return [
-                'started' => true,
-                'method'  => 'web-async-ping',
-                'note'    => 'Recache triggered via JCH\'s own signed frontend endpoint (task=recache.run) — the same path as the "Rebuild cache" button. The crawl runs in the background on the site; give it a moment.',
+                'started'     => true,
+                'method'      => 'web-async-ping',
+                'http_status' => 202,
+                'note'        => 'Recache accepted by JCH\'s own signed frontend endpoint (task=recache.run) — the same path as the "Rebuild cache" button. The crawl runs in the background on the site; give it a moment.',
             ] + $base;
         }
+
+        if ($status === 409) {
+            return [
+                'started'     => false,
+                'method'      => 'web-async-ping',
+                'http_status' => 409,
+                'reason'      => 'A recache is already running on the site (JCH lock). Wait for it to finish, then retry.',
+            ] + $base;
+        }
+
+        // Autre statut (403 signature refusée, 404/500…) ou requête non émise :
+        // on tente la voie CLI, et on reporte le statut pour le diagnostic.
+        $webNote = $status === null
+            ? 'The signed web ping could not be sent (socket/TLS failure).'
+            : 'The signed web ping was rejected by the site (HTTP ' . $status . ').';
 
         // 2) Repli : spawn du CLI en tâche de fond (exige exec + un binaire PHP + plugin Console).
         $php = $this->phpCli();
@@ -667,51 +708,79 @@ final class SiteTools
             @exec('nohup ' . escapeshellarg($php) . ' ' . escapeshellarg($cli) . ' jchoptimize:recache' . $execOpt . ' > /dev/null 2>&1 &');
 
             return [
-                'started' => true,
-                'method'  => 'cli-background',
-                'note'    => 'Recache launched via background CLI (best-effort). If it does not take effect, run the command below or add the cron.',
+                'started'  => true,
+                'method'   => 'cli-background',
+                'web_ping' => $webNote,
+                'note'     => 'Recache launched via background CLI (best-effort). If it does not take effect, run the command below or add the cron.',
             ] + $base;
         }
 
         // 3) Dernier recours : instructions manuelles (commande + cron dans $base).
         return [
-            'started' => false,
-            'reason'  => 'Could not trigger recache automatically (web self-ping and background CLI both unavailable). Run the command below, or add the cron.',
+            'started'  => false,
+            'web_ping' => $webNote,
+            'reason'   => 'Could not trigger recache automatically (web self-ping rejected or unavailable, and no background CLI). Run the command below, or add the cron.',
         ] + $base;
     }
 
     /**
-     * Repli WEB natif de JCH : ping async signé de l'endpoint frontend supporté
+     * Voie WEB native de JCH : ping signé de l'endpoint frontend supporté
      * `task=recache.run` (RecacheController::run), calqué sur
-     * UtilityController::pingRecacheAsync() de JCH 9.3.1. L'endpoint valide
-     * `hash_hmac('sha256', 'recache.run|'.ts, <secret Joomla>)` dans une fenêtre
-     * de 5 min, répond 202 immédiatement (fastcgi_finish_request) puis lance le
-     * crawl en contexte SITE via ReCacheModel::reCache(). Aucun exec/CLI requis,
-     * insensible à open_basedir (les sockets n'y sont pas soumis).
+     * UtilityController::pingRecacheAsync() de JCH. L'endpoint répond 202
+     * immédiatement (fastcgi_finish_request) puis lance le crawl en contexte
+     * SITE via ReCacheModel::reCache(). Aucun exec/CLI requis, insensible à
+     * open_basedir (les sockets n'y sont pas soumis).
      *
-     * @return bool true si la requête POST a bien été émise (best-effort).
+     * Signature :
+     *  - JCH ≥ 9.4.2 : classe `Administrator\Helper\RecacheTrigger` — ts + nonce
+     *    à usage unique (fichier `tmp/jchoptimize_recache.nonce`) +
+     *    `hash_hmac('sha256', 'recache.run|'.ts.'|'.nonce, secret)`. On réutilise
+     *    la classe de JCH elle-même (`createQuery()`), donc on suit ses évolutions.
+     *  - JCH ≤ 9.4.1 : `hash_hmac('sha256', 'recache.run|'.ts, secret)` (fenêtre 5 min).
+     *
+     * On LIT le statut HTTP de la réponse (202 = recache accepté, 403 = signature
+     * refusée, 409 = déjà en cours) au lieu de considérer l'envoi comme un succès :
+     * avant 1.2.13, l'outil annonçait `started:true` alors que JCH 9.4.2 répondait 403.
+     *
+     * @return int|null  Statut HTTP de l'endpoint, null si la requête n'a pas pu partir.
      */
-    private function pingRecacheAsync(): bool
+    private function pingRecacheAsync(): ?int
     {
         if (!\function_exists('stream_socket_client')) {
-            return false;
+            return null;
         }
 
-        $secret = (string) Factory::getApplication()->get('secret');
+        $app    = Factory::getApplication();
+        $secret = (string) $app->get('secret');
 
         if ($secret === '') {
-            return false;
+            return null;
         }
 
-        $ts  = (string) time();
-        $sig = hash_hmac('sha256', 'recache.run|' . $ts, $secret);
-        $url = $this->siteUrl() . '/index.php?option=com_jchoptimize&task=recache.run'
-            . '&ts=' . rawurlencode($ts) . '&sig=' . rawurlencode($sig);
+        $query   = null;
+        $trigger = 'CodeAlfa\\Component\\JchOptimize\\Administrator\\Helper\\RecacheTrigger';
 
+        if (class_exists($trigger) && method_exists($trigger, 'createQuery')) {
+            try {
+                $query = (string) (new $trigger($secret, (string) $app->get('tmp_path', JPATH_ROOT . '/tmp')))->createQuery();
+            } catch (\Throwable) {
+                // tmp_path non inscriptible → la signature héritée ci-dessous serait
+                // refusée de toute façon par JCH ≥ 9.4.2 : on laisse remonter l'échec.
+                return null;
+            }
+        }
+
+        if ($query === null) {
+            $ts    = (string) time();
+            $query = 'ts=' . rawurlencode($ts)
+                . '&sig=' . rawurlencode(hash_hmac('sha256', 'recache.run|' . $ts, $secret));
+        }
+
+        $url   = $this->siteUrl() . '/index.php?option=com_jchoptimize&task=recache.run&' . $query;
         $parts = parse_url($url);
 
         if (empty($parts['host'])) {
-            return false;
+            return null;
         }
 
         $https     = (($parts['scheme'] ?? 'http') === 'https');
@@ -733,7 +802,7 @@ final class SiteTools
         );
 
         if (!$fp) {
-            return false;
+            return null;
         }
 
         $path = ($parts['path'] ?? '/') . (isset($parts['query']) ? '?' . $parts['query'] : '');
@@ -742,10 +811,20 @@ final class SiteTools
             . "Connection: Close\r\n"
             . "Content-Length: 0\r\n\r\n";
 
-        $ok = @fwrite($fp, $req) !== false;
+        if (@fwrite($fp, $req) === false) {
+            @fclose($fp);
+
+            return null;
+        }
+
+        // Ligne de statut uniquement : JCH l'émet AVANT le crawl (202 puis
+        // fastcgi_finish_request), donc l'attente est courte même si le crawl est long.
+        @stream_set_timeout($fp, 15);
+        $line   = (string) @fgets($fp, 256);
+        $status = preg_match('~^HTTP/\d(?:\.\d)?\s+(\d{3})~', $line, $m) ? (int) $m[1] : 0;
         @fclose($fp);
 
-        return $ok;
+        return $status > 0 ? $status : null;
     }
 
     /** Le plugin Console de JCH (qui fournit la commande jchoptimize:recache) est-il actif ? */
