@@ -9,6 +9,7 @@ namespace Sensomedia\Component\Sensomcp\Api\Mcp;
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Joomla\CMS\User\User;
 
 \defined('_JEXEC') or die;
 
@@ -27,14 +28,49 @@ final class ResourceProvider
     }
 
     /** @return list<array{uri:string, name:string, description:string, mimeType:string}> */
+    /**
+     * @param User|null     $user   porteur du jeton (null = aucun filtrage, catalogue)
+     * @param string[]|null $scopes scopes accordés (null = pas de filtrage)
+     */
+    public function __construct(private ?User $user = null, private ?array $scopes = null)
+    {
+    }
+
+    /** Le porteur a-t-il le scope de lecture du contenu ? */
+    private function canRead(): bool
+    {
+        return $this->scopes === null || \in_array('*', $this->scopes, true) || \in_array('content.read', $this->scopes, true);
+    }
+
+    /** Filtre « article visible par le porteur » : publié, dates, catégorie publiée, niveau d'accès. */
+    private function applyReadAcl($db, $q): void
+    {
+        $now = $db->quote(Factory::getDate()->toSql());
+
+        $q->where($db->quoteName('a.state') . ' = 1')
+            ->where('(' . $db->quoteName('a.publish_up') . ' IS NULL OR ' . $db->quoteName('a.publish_up') . ' <= ' . $now . ')')
+            ->where('(' . $db->quoteName('a.publish_down') . ' IS NULL OR ' . $db->quoteName('a.publish_down') . ' >= ' . $now . ')')
+            ->join('LEFT', $db->quoteName('#__categories', 'c'), $db->quoteName('c.id') . ' = ' . $db->quoteName('a.catid'))
+            ->where('(' . $db->quoteName('c.id') . ' IS NULL OR ' . $db->quoteName('c.published') . ' = 1)');
+
+        if ($this->user !== null) {
+            $levels = array_map('intval', $this->user->getAuthorisedViewLevels() ?: [1]);
+            $q->whereIn($db->quoteName('a.access'), $levels);
+        }
+    }
+
     public function list(): array
     {
+        if (!$this->canRead()) {
+            return [];
+        }
+
         $db = $this->db();
         $q  = $db->getQuery(true)
-            ->select($db->quoteName(['id', 'title']))
-            ->from($db->quoteName('#__content'))
-            ->where($db->quoteName('state') . ' = 1')
-            ->order($db->quoteName('created') . ' DESC');
+            ->select($db->quoteName(['a.id', 'a.title']))
+            ->from($db->quoteName('#__content', 'a'))
+            ->order($db->quoteName('a.created') . ' DESC');
+        $this->applyReadAcl($db, $q);
 
         $out = [];
 
@@ -72,19 +108,22 @@ final class ResourceProvider
             throw new \RuntimeException('Unknown resource URI: ' . $uri);
         }
 
+        if (!$this->canRead()) {
+            throw new \RuntimeException('Insufficient scope: content.read is required to read resources.');
+        }
+
         $id = (int) $m[1];
         $db = $this->db();
         $q  = $db->getQuery(true)
-            ->select($db->quoteName(['title', 'introtext', 'fulltext', 'metadesc']))
-            ->from($db->quoteName('#__content'))
-            ->where($db->quoteName('id') . ' = :id')
-            ->where($db->quoteName('state') . ' = 1')
+            ->select($db->quoteName(['a.title', 'a.introtext', 'a.fulltext', 'a.metadesc']))
+            ->from($db->quoteName('#__content', 'a'))
+            ->where($db->quoteName('a.id') . ' = :id')
             ->bind(':id', $id, ParameterType::INTEGER);
-
+        $this->applyReadAcl($db, $q);
         $row = $db->setQuery($q)->loadAssoc();
 
         if (!$row) {
-            throw new \RuntimeException('Article not found or unpublished: ' . $id);
+            throw new \RuntimeException('Article not found, unpublished or not accessible: ' . $id);
         }
 
         $html = trim((string) $row['introtext'] . "\n\n" . (string) $row['fulltext']);

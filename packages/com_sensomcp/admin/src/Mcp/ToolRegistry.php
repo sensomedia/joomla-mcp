@@ -25,6 +25,21 @@ use Joomla\CMS\User\User;
  */
 class ToolRegistry
 {
+    /**
+     * Composants « d'administration » : leur gestionnaire Joomla exige `core.manage`
+     * sur le composant (dispatcher admin), alors que core.create/edit/edit.state/delete
+     * sont hérités de la racine par Author/Editor/Publisher/Manager. Pour une ACL en
+     * forme tableau `[action, composant]` visant l'un d'eux, `core.manage` est exigé en
+     * plus (audit 2026-10-12). Un plugin peut refuser la règle avec `acl_manage => false`
+     * (ex. yootheme : parité avec le Customizer, qui ne demande que core.edit).
+     */
+    public const ADMIN_COMPONENTS = [
+        'com_menus', 'com_templates', 'com_languages', 'com_plugins', 'com_cache', 'com_installer',
+        'com_users', 'com_modules', 'com_fields', 'com_redirect', 'com_checkin', 'com_scheduler',
+        'com_config', 'com_admin', 'com_finder', 'com_banners', 'com_newsfeeds', 'com_privacy',
+        'com_actionlogs', 'com_mails', 'com_messages', 'com_postinstall', 'com_joomlaupdate', 'com_sensomcp',
+    ];
+
     /** @var array<string, array{description:string, inputSchema:array, handler:callable, scope:string}> */
     private array $tools = [];
 
@@ -77,6 +92,7 @@ class ToolRegistry
             'origin'          => $meta['origin'] ?? $this->originFromScope($scope),
             'default_enabled' => \array_key_exists('default_enabled', $meta) ? (bool) $meta['default_enabled'] : true,
             'acl'             => $meta['acl'] ?? null,
+            'acl_manage'      => !\array_key_exists('acl_manage', $meta) || (bool) $meta['acl_manage'],
         ];
     }
 
@@ -254,7 +270,19 @@ class ToolRegistry
         $action = (string) ($acl[0] ?? '');
         $asset  = $acl[1] ?? null;
 
-        return $action === '' ? true : (bool) $this->user->authorise($action, $asset);
+        if ($action === '') {
+            return true;
+        }
+
+        // Composant d'administration : l'accès au gestionnaire (core.manage) est requis
+        // en plus de l'action, comme dans le back-office.
+        if (\is_string($asset) && ($tool['acl_manage'] ?? true)
+            && \in_array(strtolower($asset), self::ADMIN_COMPONENTS, true)
+            && !$this->user->authorise('core.manage', $asset)) {
+            return false;
+        }
+
+        return (bool) $this->user->authorise($action, $asset);
     }
 
     private function isGranted(string $scope): bool

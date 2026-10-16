@@ -21,6 +21,11 @@ $o = $this->oauth;
         '<strong>' . htmlspecialchars($this->username, ENT_QUOTES) . '</strong>'
     ); ?></p>
 
+    <p style="padding:.6rem .8rem;border:1px solid #d9d9d9;border-radius:6px;background:#fafafa;"><?php echo Text::sprintf(
+        'COM_SENSOMCP_OAUTH_CONSENT_REDIRECT',
+        '<code style="font-size:1.05em;">' . htmlspecialchars((string) ($this->redirectHost ?? ''), ENT_QUOTES) . '</code>'
+    ); ?></p>
+
     <form action="<?php echo Route::_('index.php?option=com_sensomcp&task=oauth.authorize'); ?>" method="post">
         <?php foreach (['response_type','client_id','redirect_uri','state','code_challenge','code_challenge_method','resource'] as $k) : ?>
             <input type="hidden" name="<?php echo $k; ?>" value="<?php echo htmlspecialchars((string) ($o[$k] ?? ''), ENT_QUOTES); ?>">

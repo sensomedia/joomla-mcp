@@ -41,6 +41,11 @@ class PluginsController extends BaseController
 
         $element = $this->app->input->getCmd('element', '');
 
+        // Seuls les plugins du dossier « sensomcp » sont basculables ici (audit 2026-10-12).
+        if (!$this->isSensomcpPlugin($id)) {
+            $this->ajaxOut(false, 'not a Senso MCP plugin');
+        }
+
         $this->setPluginEnabled($id, $on);
         $this->cleanCaches();
         $this->ajaxOut(true, '', ['id' => $id, 'enabled' => $on, 'html' => $this->rowHtml($element)]);
@@ -257,6 +262,21 @@ class PluginsController extends BaseController
     private function db(): DatabaseInterface
     {
         return Factory::getContainer()->get(DatabaseInterface::class);
+    }
+
+    /** L'extension est-elle un plugin du dossier sensomcp ? */
+    private function isSensomcpPlugin(int $extensionId): bool
+    {
+        $db = $this->db();
+        $q  = $db->getQuery(true)
+            ->select('COUNT(*)')
+            ->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('extension_id') . ' = :id')
+            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+            ->where($db->quoteName('folder') . ' = ' . $db->quote('sensomcp'))
+            ->bind(':id', $extensionId, ParameterType::INTEGER);
+
+        return (int) $db->setQuery($q)->loadResult() > 0;
     }
 
     private function setPluginEnabled(int $extensionId, bool $enabled): void

@@ -135,6 +135,7 @@ class OauthController extends BaseController
         $input->set('view', 'authorize');
         $view = $this->getView('Authorize', 'html');
         $view->clientName      = (string) $client->client_name;
+        $view->redirectHost    = (string) (parse_url($params['redirect_uri'], \PHP_URL_HOST) ?: $params['redirect_uri']);
         $view->username        = (string) $user->name;
         $view->availableScopes = $available;
         $view->requestedScopes = $requested;

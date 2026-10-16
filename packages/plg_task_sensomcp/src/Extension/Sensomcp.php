@@ -50,7 +50,8 @@ final class Sensomcp extends CMSPlugin implements SubscriberInterface
     private function runCleanup(ExecuteTaskEvent $event): int
     {
         $params  = $event->getArgument('params') ?? new \stdClass();
-        $logDays = max(0, (int) ($params->log_retention_days ?? 30));
+        $logDays    = max(0, (int) ($params->log_retention_days ?? 30));
+        $clientDays = max(0, (int) ($params->oauth_client_retention_days ?? 90));
 
         $db  = $this->getDatabase();
         $log = [];
@@ -67,6 +68,15 @@ final class Sensomcp extends CMSPlugin implements SubscriberInterface
             '(' . $db->quoteName('expires') . ' < UTC_TIMESTAMP() OR ' . $db->quoteName('revoked') . ' = 1)'
         );
         $log[] = "Refresh tokens expirés/révoqués purgés : $refresh";
+
+        // Clients OAuth enregistrés dynamiquement (auth « none »), inactifs : aucun refresh
+        // token valide ni code en attente, créés il y a plus de N jours (audit 2026-10-12).
+        if ($clientDays > 0) {
+            $clients = $this->purgeIdleClients($clientDays, false);
+            $log[]   = "Clients OAuth inactifs (> $clientDays j) purgés : $clients";
+        } else {
+            $log[] = 'Clients OAuth : rétention illimitée (0)';
+        }
 
         if ($logDays > 0) {
             // $logDays est un entier casté → interpolation sûre dans l'INTERVAL.
@@ -93,6 +103,35 @@ final class Sensomcp extends CMSPlugin implements SubscriberInterface
         $this->logTask(implode(' | ', $log));
 
         return TaskStatus::OK;
+    }
+
+    /**
+     * Clients OAuth dynamiques inactifs : auth « none », aucun refresh token valide,
+     * aucun code d'autorisation en attente, créés il y a plus de `$days` jours.
+     * `$dryRun` = compter sans supprimer. Renvoie le nombre de lignes concernées.
+     */
+    public function purgeIdleClients(int $days, bool $dryRun): int
+    {
+        $db   = $this->getDatabase();
+        $days = max(1, $days);
+        $from = $db->quoteName('#__sensomcp_oauth_clients', 'c')
+            . ' LEFT JOIN ' . $db->quoteName('#__sensomcp_oauth_refresh', 'r')
+            . ' ON ' . $db->quoteName('r.client_id') . ' = ' . $db->quoteName('c.client_id')
+            . ' AND ' . $db->quoteName('r.revoked') . ' = 0 AND ' . $db->quoteName('r.expires') . ' >= UTC_TIMESTAMP()'
+            . ' LEFT JOIN ' . $db->quoteName('#__sensomcp_oauth_codes', 'k')
+            . ' ON ' . $db->quoteName('k.client_id') . ' = ' . $db->quoteName('c.client_id')
+            . ' AND ' . $db->quoteName('k.expires') . ' >= UTC_TIMESTAMP()';
+        $where = $db->quoteName('r.id') . ' IS NULL AND ' . $db->quoteName('k.id') . ' IS NULL'
+            . ' AND ' . $db->quoteName('c.token_endpoint_auth_method') . ' = ' . $db->quote('none')
+            . ' AND ' . $db->quoteName('c.created') . ' < DATE_SUB(UTC_TIMESTAMP(), INTERVAL ' . $days . ' DAY)';
+
+        if ($dryRun) {
+            return (int) $db->setQuery('SELECT COUNT(*) FROM ' . $from . ' WHERE ' . $where)->loadResult();
+        }
+
+        $db->setQuery('DELETE c FROM ' . $from . ' WHERE ' . $where)->execute();
+
+        return (int) $db->getAffectedRows();
     }
 
     /** La table existe-t-elle (installs antérieures au rate limiting) ? */

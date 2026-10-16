@@ -10,6 +10,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Form;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 use Sensomedia\Plugin\Sensomcp\Content\Support\ResolvesPublicUrls;
@@ -133,13 +134,17 @@ final class TagTools
             ->getMVCFactory()->createModel('Tag', 'Administrator', ['ignore_request' => true]);
     }
 
-    private function primeForm($model, array $data): void
+    private function form($model, array $data): Form
     {
-        Form::addFormPath(JPATH_ADMINISTRATOR . '/components/com_tags/forms');
+        FormGate::useAdminForms('com_tags');
 
-        if (method_exists($model, 'getForm')) {
-            $model->getForm($data, false);
+        $form = $model->getForm($data, false);
+
+        if (!$form instanceof Form) {
+            throw new McpToolException('Could not load the tag form: ' . $this->modelErrors($model));
         }
+
+        return $form;
     }
 
     private function listTags(string $query): array
@@ -239,15 +244,17 @@ final class TagTools
         ];
 
         $model = $this->model();
-        $this->primeForm($model, $data);
+        $gate  = FormGate::apply($this->form($model, $data), $data, [], ['id']);
+        $data  = $gate['data'];
 
         if (!$model->save($data)) {
             throw new McpToolException('Create failed: ' . $this->modelErrors($model));
         }
 
-        $tid = (int) $model->getState('tag.id');
+        $tid    = (int) $model->getState('tag.id');
+        $result = $this->withTagUrls(['ok' => true, 'id' => $tid, 'title' => $title], $tid);
 
-        return $this->withTagUrls(['ok' => true, 'id' => $tid, 'title' => $title], $tid);
+        return $gate['ignored'] ? $result + ['ignored' => $gate['ignored']] : $result;
     }
 
     private function updateTag(array $a): array
@@ -274,13 +281,24 @@ final class TagTools
             'language'    => (string) ($a['language'] ?? $current->language),
         ];
 
-        $this->primeForm($model, $data);
+        $input = $data;
+
+        foreach (['title', 'parent_id', 'description', 'published', 'language'] as $k) {
+            if (!\array_key_exists($k === 'published' ? 'state' : $k, $a)) {
+                unset($input[$k]);
+            }
+        }
+
+        $gate = FormGate::apply($this->form($model, $data), $input, FormGate::itemData($current), ['id']);
+        $data = $gate['data'];
 
         if (!$model->save($data)) {
             throw new McpToolException('Update failed: ' . $this->modelErrors($model));
         }
 
-        return $this->withTagUrls(['ok' => true, 'id' => $id], $id);
+        $result = $this->withTagUrls(['ok' => true, 'id' => $id], $id);
+
+        return $gate['ignored'] ? $result + ['ignored' => $gate['ignored']] : $result;
     }
 
     private function deleteTag(array $a): array

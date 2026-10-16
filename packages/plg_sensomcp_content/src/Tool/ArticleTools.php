@@ -12,6 +12,7 @@ use Joomla\CMS\Form\Form;
 use Joomla\CMS\Router\Route;
 use Joomla\Database\DatabaseInterface;
 use Joomla\CMS\User\User;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\Ordering;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\Pagination;
@@ -148,7 +149,11 @@ final class ArticleTools
             ],
             fn (array $a) => $this->createArticle($a),
             'content.write',
-            ['acl' => ['core.create', 'com_content']]
+            ['acl' => function (User $me, array $a): bool {
+                $catid = (int) ($a['catid'] ?? 0) ?: $this->defaultCatid;
+
+                return (bool) $me->authorise('core.create', $catid > 0 ? 'com_content.category.' . $catid : 'com_content');
+            }]
         );
 
         $registry->register(
@@ -188,7 +193,15 @@ final class ArticleTools
             ],
             fn (array $a) => $this->updateArticle($a),
             'content.write',
-            ['acl' => ['core.edit', 'com_content']]
+            ['acl' => function (User $me, array $a): bool {
+                $id = (int) ($a['id'] ?? 0);
+
+                if ($id <= 0) {
+                    return $me->authorise('core.edit', 'com_content') || $me->authorise('core.edit.own', 'com_content');
+                }
+
+                return FormGate::canEdit($me, 'com_content.article.' . $id, $this->createdBy($id));
+            }]
         );
 
         $registry->register(
@@ -254,7 +267,10 @@ final class ArticleTools
             ],
             fn (array $a) => $this->reorderArticle($a),
             'content.write',
-            ['acl' => ['core.edit.state', 'com_content']]
+            ['acl' => fn (User $me, array $a): bool => (bool) $me->authorise(
+                'core.edit.state',
+                (int) ($a['id'] ?? 0) > 0 ? 'com_content.article.' . (int) $a['id'] : 'com_content'
+            )]
         );
 
         $registry->register(
@@ -588,6 +604,9 @@ final class ArticleTools
      * {@see applyFeaturedArgs}.
      */
     private const DATE_ARGS = ['created', 'publish_up', 'publish_down'];
+
+    /** Dates déjà converties en UTC SQL par sqlDate() : hors filtre `user_utc` du formulaire (double conversion). */
+    private const UTC_DATES = ['created', 'publish_up', 'publish_down', 'featured_up', 'featured_down'];
 
     /** Valeurs admises pour metadata.robots (formulaire article de com_content). */
     private const ROBOTS = ['', 'index, follow', 'noindex, follow', 'index, nofollow', 'noindex, nofollow'];
@@ -938,13 +957,38 @@ final class ArticleTools
      * explicitement et on amorce le formulaire, faute de quoi le save() du
      * modèle Administrator échoue sur « Form::loadForm could not load file ».
      */
-    private function primeForm($model, array $data): void
+    private function form($model, array $data): Form
     {
-        Form::addFormPath(JPATH_ADMINISTRATOR . '/components/com_content/forms');
-        Form::addFieldPath(JPATH_ADMINISTRATOR . '/components/com_content/src/Field');
+        FormGate::useAdminForms('com_content');
 
-        if (method_exists($model, 'getForm')) {
-            $model->getForm($data, false);
+        $form = $model->getForm($data, false);
+
+        if (!$form instanceof Form) {
+            throw new McpToolException('Could not load the article form: ' . $this->modelErrors($model));
+        }
+
+        return $form;
+    }
+
+    /** created_by d'un article (0 si inconnu), pour la règle core.edit.own. */
+    private function createdBy(int $id): int
+    {
+        $db = $this->db();
+
+        return (int) $db->setQuery(
+            $db->getQuery(true)
+                ->select($db->quoteName('created_by'))
+                ->from($db->quoteName('#__content'))
+                ->where($db->quoteName('id') . ' = :id')
+                ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER)
+        )->loadResult();
+    }
+
+    /** Déplacer vers une autre catégorie exige core.create sur la cible (comme le batch « move » du cœur). */
+    private function assertCanMoveTo(int $newCatid, int $currentCatid): void
+    {
+        if ($newCatid !== $currentCatid && !$this->user->authorise('core.create', 'com_content.category.' . $newCatid)) {
+            throw new McpToolException("Insufficient permission: core.create on category $newCatid is required to move the article there.");
         }
     }
 
@@ -1085,7 +1129,6 @@ final class ArticleTools
             'access'      => (int) Factory::getApplication()->get('access', 1),
             'metadesc'    => (string) ($a['metadesc'] ?? ''),
             'metakey'     => (string) ($a['metakey'] ?? ''),
-            'created_by'  => (int) (Factory::getApplication()->getIdentity()->id ?? 0),
             'attribs'     => [],
             'metadata'    => [],
             'images'      => $this->buildImages($a, []),
@@ -1108,7 +1151,13 @@ final class ArticleTools
         }
 
         $model = $this->articleModel();
-        $this->primeForm($model, $data);
+        $form  = $this->form($model, $data);
+
+        // Création : tout passe au filtre du formulaire (filtres de texte, retrait de
+        // state/publish_*/featured* sans core.edit.state, created_by sans core.manage com_users).
+        $gate    = FormGate::apply($form, $data, [], ['id', 'tags'], null, self::UTC_DATES);
+        $data    = $gate['data'];
+        $ignored = $gate['ignored'];
 
         if (!$model->save($data)) {
             throw new McpToolException('Create failed: ' . $this->modelErrors($model));
@@ -1121,8 +1170,12 @@ final class ArticleTools
             'id'    => $id,
             'title' => $title,
             'catid' => $catid,
-            'state' => $data['state'],
+            'state' => (int) ($data['state'] ?? 0),
         ] + $this->storedDates($id), $id);
+
+        if ($ignored) {
+            $result['ignored'] = $ignored;
+        }
 
         if (!empty($a['fields']) && \is_array($a['fields'])) {
             $result['fields'] = $this->fields()->setValues($id, $catid, $a['fields']);
@@ -1209,13 +1262,32 @@ final class ArticleTools
             $data['tags'] = array_map('strval', $this->currentTagIds($id));
         }
 
-        $this->primeForm($model, $data);
+        $this->assertCanMoveTo((int) $data['catid'], (int) $current->catid);
+
+        // Mise à jour : seuls les champs fournis passent au filtre, fusionnés dans l'item
+        // courant (un corps existant n'est pas re-filtré).
+        $input = $data;
+
+        foreach (['title', 'catid', 'state', 'language', 'metadesc', 'metakey'] as $k) {
+            if (!\array_key_exists($k, $a)) {
+                unset($input[$k]);
+            }
+        }
+
+        $form    = $this->form($model, $data);
+        $gate    = FormGate::apply($form, $input, FormGate::itemData($current), ['id', 'tags'], null, self::UTC_DATES);
+        $data    = $gate['data'];
+        $ignored = $gate['ignored'];
 
         if (!$model->save($data)) {
             throw new McpToolException('Update failed: ' . $this->modelErrors($model));
         }
 
-        $result = $this->withUrls(['ok' => true, 'id' => $id, 'state' => $data['state']] + $this->storedDates($id), $id);
+        $result = $this->withUrls(['ok' => true, 'id' => $id, 'state' => (int) ($data['state'] ?? $current->state)] + $this->storedDates($id), $id);
+
+        if ($ignored) {
+            $result['ignored'] = $ignored;
+        }
 
         if (!empty($a['fields']) && \is_array($a['fields'])) {
             $result['fields'] = $this->fields()->setValues($id, (int) $data['catid'], $a['fields']);

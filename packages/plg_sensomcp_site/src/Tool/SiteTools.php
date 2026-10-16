@@ -401,11 +401,9 @@ final class SiteTools
             UrlGuard::assertSameSite($url);
         }
 
-        try {
-            $response = HttpFactory::getHttp([], ['curl', 'stream'])->get($url, [], 25);
-        } catch (\Throwable $e) {
-            throw new McpToolException('Fetch failed: ' . $e->getMessage());
-        }
+        // Hôte exact du site à chaque saut (une redirection vers l'extérieur est refusée),
+        // pas de suivi automatique, corps borné.
+        $response = UrlGuard::fetch($url, ['same_site' => true, 'timeout' => 25, 'max_bytes' => 8 * 1048576]);
 
         $html  = (string) $response->body;
         $title = preg_match('#<title>(.*?)</title>#is', $html, $m) ? trim(html_entity_decode($m[1])) : '';

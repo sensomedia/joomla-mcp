@@ -12,6 +12,7 @@ use Joomla\CMS\User\User;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Registry\Registry;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 use Sensomedia\Plugin\Sensomcp\Content\Support\ResolvesPublicUrls;
@@ -102,7 +103,11 @@ final class CategoryTools
             ],
             fn (array $a) => $this->createCategory($a),
             'content.write',
-            ['acl' => ['core.create', 'com_content']]
+            ['acl' => static function (User $me, array $a): bool {
+                $parent = (int) ($a['parent_id'] ?? 1);
+
+                return (bool) $me->authorise('core.create', $parent > 1 ? 'com_content.category.' . $parent : 'com_content');
+            }]
         );
 
         $registry->register(
@@ -127,7 +132,10 @@ final class CategoryTools
             ],
             fn (array $a) => $this->updateCategory($a),
             'content.write',
-            ['acl' => ['core.edit', 'com_content']]
+            ['acl' => static fn (User $me, array $a): bool => (bool) $me->authorise(
+                'core.edit',
+                (int) ($a['id'] ?? 0) > 0 ? 'com_content.category.' . (int) $a['id'] : 'com_content'
+            )]
         );
 
         $registry->register(
@@ -193,13 +201,17 @@ final class CategoryTools
     }
 
     /** Enregistre les chemins de formulaires (comme pour les articles). */
-    private function primeForm($model, array $data): void
+    private function form($model, array $data): Form
     {
-        Form::addFormPath(JPATH_ADMINISTRATOR . '/components/com_categories/forms');
+        FormGate::useAdminForms('com_categories');
 
-        if (method_exists($model, 'getForm')) {
-            $model->getForm($data + ['extension' => self::EXTENSION], false);
+        $form = $model->getForm($data + ['extension' => self::EXTENSION], false);
+
+        if (!$form instanceof Form) {
+            throw new McpToolException('Could not load the category form: ' . $this->modelErrors($model));
         }
+
+        return $form;
     }
 
     /**
@@ -331,7 +343,8 @@ final class CategoryTools
         }
 
         $model = $this->model();
-        $this->primeForm($model, $data);
+        $gate  = FormGate::apply($this->form($model, $data), $data, [], ['id', 'extension']);
+        $data  = $gate['data'];
 
         if (!$model->save($data)) {
             throw new McpToolException('Create failed: ' . $this->modelErrors($model));
@@ -339,6 +352,10 @@ final class CategoryTools
 
         $catid  = (int) $model->getState('category.id');
         $result = $this->withCategoryUrls(['ok' => true, 'id' => $catid, 'title' => $title], $catid);
+
+        if ($gate['ignored']) {
+            $result['ignored'] = $gate['ignored'];
+        }
 
         // Les champs d'une catégorie sont affectés par catégorie : l'id n'existe
         // qu'après le save, d'où l'écriture des valeurs a posteriori.
@@ -400,13 +417,34 @@ final class CategoryTools
             $data['params'] = $params->toArray();
         }
 
-        $this->primeForm($model, $data);
+        if ((int) $data['parent_id'] !== (int) $current->parent_id) {
+            $parent = (int) $data['parent_id'];
+
+            if (!$this->user->authorise('core.create', $parent > 1 ? 'com_content.category.' . $parent : 'com_content')) {
+                throw new McpToolException("Insufficient permission: core.create on category $parent is required to move the category there.");
+            }
+        }
+
+        $input = $data;
+
+        foreach (['title', 'parent_id', 'description', 'published', 'language'] as $k) {
+            if (!\array_key_exists($k === 'published' ? 'state' : $k, $a)) {
+                unset($input[$k]);
+            }
+        }
+
+        $gate = FormGate::apply($this->form($model, $data), $input, FormGate::itemData($current), ['id', 'extension']);
+        $data = $gate['data'];
 
         if (!$model->save($data)) {
             throw new McpToolException('Update failed: ' . $this->modelErrors($model));
         }
 
         $result = $this->withCategoryUrls(['ok' => true, 'id' => $id], $id);
+
+        if ($gate['ignored']) {
+            $result['ignored'] = $gate['ignored'];
+        }
 
         if (!empty($a['fields']) && \is_array($a['fields'])) {
             $result['fields'] = $this->fields()->setValues($id, $id, $a['fields']);

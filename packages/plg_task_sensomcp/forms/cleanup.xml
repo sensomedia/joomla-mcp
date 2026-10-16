@@ -11,6 +11,15 @@
                 min="0"
                 filter="integer"
             />
+            <field
+                name="oauth_client_retention_days"
+                type="number"
+                label="PLG_TASK_SENSOMCP_CLEANUP_CLIENT_RETENTION_LABEL"
+                description="PLG_TASK_SENSOMCP_CLEANUP_CLIENT_RETENTION_DESC"
+                default="90"
+                min="0"
+                filter="integer"
+            />
         </fieldset>
     </fields>
 </form>

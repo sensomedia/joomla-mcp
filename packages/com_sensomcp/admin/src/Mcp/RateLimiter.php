@@ -26,8 +26,10 @@ final class RateLimiter
     /**
      * @return array{retry_after:int}|null  null = autorisé ; sinon = dépassé.
      */
-    public static function check(int $userId, string $ip): ?array
+    public static function check(int $userId, string $ip, int $weight = 1): ?array
     {
+        $weight = max(1, $weight);
+
         $params = ComponentHelper::getParams('com_sensomcp');
 
         if ((int) $params->get('ratelimit_enabled', 1) !== 1) {
@@ -49,10 +51,10 @@ final class RateLimiter
             $db->setQuery(
                 "INSERT INTO $table (" . $db->quoteName('rl_key') . ', '
                 . $db->quoteName('window_start') . ', ' . $db->quoteName('hits')
-                . ") VALUES ($key, $winStart, 1) "
+                . ") VALUES ($key, $winStart, $weight) "
                 . 'ON DUPLICATE KEY UPDATE '
                 . $db->quoteName('hits') . ' = IF(' . $db->quoteName('window_start') . " = $winStart, "
-                . $db->quoteName('hits') . ' + 1, 1), '
+                . $db->quoteName('hits') . " + $weight, $weight), "
                 . $db->quoteName('window_start') . " = $winStart"
             )->execute();
 

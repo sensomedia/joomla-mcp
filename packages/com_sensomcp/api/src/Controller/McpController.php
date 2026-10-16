@@ -17,6 +17,7 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolState;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\RateLimiter;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\BearerAuthenticator;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\Metadata;
+use Sensomedia\Component\Sensomcp\Api\Mcp\ResourceProvider;
 use Sensomedia\Component\Sensomcp\Api\Mcp\Server;
 
 \defined('_JEXEC') or die;
@@ -34,6 +35,9 @@ use Sensomedia\Component\Sensomcp\Api\Mcp\Server;
 class McpController extends BaseController
 {
     private const SERVER_NAME    = 'senso-mcp';
+
+    /** Taille maximale d'un lot JSON-RPC (messages). */
+    private const MAX_BATCH = 20;
     private const SERVER_VERSION = '0.1.0';
 
     /** Niveau de tampon de sortie au moment de l'armement du blindage. */
@@ -76,17 +80,6 @@ class McpController extends BaseController
             return;
         }
 
-        // Rate limiting (protection de disponibilité) — après auth, avant tout
-        // travail lourd. Clé = identité du porteur ; fail-open si indisponible.
-        $rl = RateLimiter::check((int) $auth['user_id'], $ip);
-
-        if ($rl !== null) {
-            RequestLog::record((int) $auth['user_id'], $ip, '(ratelimit)', null, false, 'rate limited');
-            $this->tooManyRequests($app, (int) $rl['retry_after']);
-
-            return;
-        }
-
         // On charge l'identité pour que l'ACL com_content (création d'articles…)
         // s'applique au compte authentifié. On pose AUSSI l'utilisateur de
         // session : beaucoup de composants (com_fields canEditFieldValue, etc.)
@@ -116,6 +109,29 @@ class McpController extends BaseController
         $isBatch  = \is_array($decoded) && array_is_list($decoded) && $decoded !== [];
         $messages = $isBatch ? $decoded : [$decoded];
         $out      = [];
+
+        // Lot JSON-RPC borné (audit 2026-10-12) : au-delà, requête invalide.
+        if ($isBatch && \count($messages) > self::MAX_BATCH) {
+            RequestLog::record((int) $user->id, $ip, '(batch)', null, false, 'batch too large');
+            $this->respond($app, [
+                'jsonrpc' => '2.0',
+                'id'      => null,
+                'error'   => ['code' => -32600, 'message' => 'Batch too large (max ' . self::MAX_BATCH . ' messages).'],
+            ]);
+
+            return;
+        }
+
+        // Rate limiting (protection de disponibilité) — après auth et décodage, chaque
+        // message du lot compte pour un. Clé = identité du porteur ; fail-open si indisponible.
+        $rl = RateLimiter::check((int) $auth['user_id'], $ip, \count($messages));
+
+        if ($rl !== null) {
+            RequestLog::record((int) $auth['user_id'], $ip, '(ratelimit)', null, false, 'rate limited');
+            $this->tooManyRequests($app, (int) $rl['retry_after']);
+
+            return;
+        }
 
         foreach ($messages as $message) {
             if (!\is_array($message)) {
@@ -184,7 +200,9 @@ class McpController extends BaseController
         $registry->setReadOnly(ToolState::isReadOnly());
         $registry->setToolPolicy(ToolState::getMap());
 
-        return new Server($registry, self::SERVER_NAME, self::SERVER_VERSION);
+        // Ressources (articles) : mêmes règles de lecture que les outils (scope content.read,
+        // niveaux d'accès, état/dates) — audit 2026-10-12.
+        return new Server($registry, self::SERVER_NAME, self::SERVER_VERSION, new ResourceProvider($user, $scopes));
     }
 
     /**
