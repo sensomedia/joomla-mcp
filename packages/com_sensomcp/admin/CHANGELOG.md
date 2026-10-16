@@ -2,7 +2,7 @@
 
 ## 1.3.0 - 2026-10-16
 ### Security
-- Hardening release following a security review of the MCP server and its plugins. Permission checks now mirror the Joomla administrator more closely: content written through MCP goes through the Joomla forms and text filters, publishing fields (state, dates, featured, author) require the matching rights, and tools acting on administration areas require access to the corresponding manager. Accounts with limited rights may therefore see fewer tools, or get their articles created unpublished, exactly as in the administrator.
+- Permission checks now mirror the Joomla administrator more closely: content written through MCP goes through the Joomla forms and text filters, publishing fields (state, dates, featured, author) require the matching rights, and tools acting on administration areas require access to the corresponding manager. Accounts with limited rights may therefore see fewer tools, or get their articles created unpublished, exactly as in the administrator.
 - Downloads triggered by a tool argument (media, extension packages, YOOtheme library) are validated more strictly, and MCP resources follow the reader's rights and the `content.read` scope.
 - JSON-RPC batches are limited to 20 messages. The OAuth consent page now shows the host you will be redirected to.
 ### Added
