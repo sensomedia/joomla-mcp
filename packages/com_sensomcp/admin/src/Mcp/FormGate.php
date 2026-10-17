@@ -145,7 +145,29 @@ final class FormGate
             }
         }
 
-        self::validate($form, $final);
+        // Validation limitée aux champs FOURNIS (plus les champs obligatoires) : les valeurs
+        // existantes non touchées ne sont pas rejugées — sinon un article portant un lien
+        // relatif écrit par MCP deviendrait impossible à modifier (règle URL du cœur).
+        $subset = array_intersect_key($final, $input);
+
+        foreach ((array) $form->getFieldset() as $field) {
+            if (!$field->required) {
+                continue;
+            }
+
+            $name  = (string) $field->fieldname;
+            $group = (string) $field->group;
+
+            if ($group !== '') {
+                if (isset($final[$group][$name])) {
+                    $subset[$group][$name] = $final[$group][$name];
+                }
+            } elseif (\array_key_exists($name, $final)) {
+                $subset[$name] = $final[$name];
+            }
+        }
+
+        self::validate($form, $subset);
 
         return ['data' => $final, 'ignored' => $ignored];
     }

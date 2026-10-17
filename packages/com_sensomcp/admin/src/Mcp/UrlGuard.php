@@ -34,6 +34,26 @@ final class UrlGuard
         self::validate($url, false);
     }
 
+    /** Schémas exécutables par le navigateur, refusés dans un lien éditorial (menu, liens A/B/C…). */
+    public const EXECUTABLE_SCHEMES = ['javascript', 'data', 'vbscript'];
+
+    /**
+     * Nettoie un lien éditorial comme le filtre URL de Joomla (retrait de < > " et des
+     * caractères de contrôle) et refuse un schéma exécutable. Ancres, chemins relatifs,
+     * mailto:, tel: et protocoles web passent. Renvoie le lien nettoyé.
+     */
+    public static function cleanEditorialLink(string $link, string $what = 'link'): string
+    {
+        $link  = str_replace(['<', '>', '"'], '', trim($link));
+        $probe = strtolower((string) preg_replace('/[\x00-\x20\x7F]+/', '', $link));
+
+        if (preg_match('/^([a-z][a-z0-9+.-]*):/', $probe, $m) && \in_array($m[1], self::EXECUTABLE_SCHEMES, true)) {
+            throw new McpToolException("Refused: a '" . $m[1] . ":' " . $what . " is not allowed. Use http(s), mailto:, tel:, a relative path or an anchor.");
+        }
+
+        return $link;
+    }
+
     /** L'URL pointe sur l'hôte exact du site. */
     public static function assertSameSite(string $url): void
     {

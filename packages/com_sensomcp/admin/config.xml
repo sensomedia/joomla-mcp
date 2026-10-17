@@ -53,6 +53,30 @@
             showon="ratelimit_enabled:1" />
 
         <field
+            name="oauth_max_days"
+            type="number"
+            label="COM_SENSOMCP_OAUTH_MAX_DAYS_LABEL"
+            description="COM_SENSOMCP_OAUTH_MAX_DAYS_DESC"
+            default="90"
+            min="0" />
+
+        <field
+            name="oauth_register_max_hour"
+            type="number"
+            label="COM_SENSOMCP_OAUTH_REGISTER_MAX_HOUR_LABEL"
+            description="COM_SENSOMCP_OAUTH_REGISTER_MAX_HOUR_DESC"
+            default="10"
+            min="0" />
+
+        <field
+            name="oauth_register_max_day"
+            type="number"
+            label="COM_SENSOMCP_OAUTH_REGISTER_MAX_DAY_LABEL"
+            description="COM_SENSOMCP_OAUTH_REGISTER_MAX_DAY_DESC"
+            default="50"
+            min="0" />
+
+        <field
             name="debug"
             type="radio"
             layout="joomla.form.field.radio.switcher"

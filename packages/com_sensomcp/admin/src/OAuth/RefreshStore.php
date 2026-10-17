@@ -6,7 +6,9 @@
 
 namespace Sensomedia\Component\Sensomcp\Administrator\OAuth;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 
@@ -30,10 +32,15 @@ final class RefreshStore
         return Factory::getContainer()->get(DatabaseInterface::class);
     }
 
-    public function create(string $clientId, int $userId, string $scope, string $resource): string
+    /**
+     * `$origin` = date du PREMIER refresh token de la chaîne (recopiée à chaque rotation) ;
+     * null = nouvelle chaîne (consentement). Sert à la durée absolue d'une connexion.
+     */
+    public function create(string $clientId, int $userId, string $scope, string $resource, ?string $origin = null): string
     {
         $token = $this->tokens->opaque(32);
         $db    = $this->db();
+        $now   = Factory::getDate()->toSql();
 
         $row = (object) [
             'token_hash' => $this->tokens->hash($token),
@@ -43,12 +50,42 @@ final class RefreshStore
             'resource'   => $resource,
             'expires'    => Factory::getDate('+' . self::REFRESH_TTL . ' seconds')->toSql(),
             'revoked'    => 0,
-            'created'    => Factory::getDate()->toSql(),
+            'created'    => $now,
+            'origin'     => $origin ?: $now,
         ];
 
         $db->insertObject('#__sensomcp_oauth_refresh', $row);
 
         return $token;
+    }
+
+    /**
+     * La chaîne de cette ligne peut-elle encore être prolongée ? Renvoie null si oui,
+     * sinon la raison (`invalid_grant`) : durée absolue dépassée (param `oauth_max_days`,
+     * 0 = illimitée), compte bloqué / non activé, ou droit `core.login.api` perdu.
+     * Appelé APRÈS consume() : en cas de refus la ligne est déjà révoquée → le client
+     * doit repasser par le consentement (audit 2026-10-12, M1).
+     */
+    public function renewalRefusal(object $row): ?string
+    {
+        $maxDays = (int) ComponentHelper::getParams('com_sensomcp')->get('oauth_max_days', 90);
+        $origin  = (string) ($row->origin ?: $row->created);
+
+        if ($maxDays > 0 && $origin !== '' && Factory::getDate($origin)->toUnix() < time() - $maxDays * 86400) {
+            return 'OAuth session older than ' . $maxDays . ' days: please authorize again';
+        }
+
+        $user = Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById((int) $row->user_id);
+
+        if (!$user || !$user->id || $user->get('block') || !\in_array((string) $user->get('activation'), ['', '0'], true)) {
+            return 'Account blocked or not activated';
+        }
+
+        if (!$user->authorise('core.login.api')) {
+            return 'Account no longer allowed to use the API (core.login.api)';
+        }
+
+        return null;
     }
 
     /**

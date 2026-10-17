@@ -47,6 +47,15 @@ final class BearerAuthenticator
                 return null;
             }
 
+            // Le droit d'utiliser l'API est revérifié à CHAQUE requête, pas seulement au
+            // consentement : un compte retiré du groupe autorisé perd l'accès tout de suite
+            // (audit 2026-10-12, M1 ; même règle que le chemin jeton Joomla ci-dessous).
+            $jwtUser = Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById($uid);
+
+            if (!$jwtUser || !$jwtUser->id || !$jwtUser->authorise('core.login.api')) {
+                return null;
+            }
+
             // Révocation globale OAuth (réponse à incident) : les JWT étant sans
             // état, le seul moyen de tuer d'un coup tous les jetons déjà émis est
             // de rejeter ceux dont l'`iat` précède le point de révocation.

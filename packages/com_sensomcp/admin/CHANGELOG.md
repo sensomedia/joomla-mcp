@@ -1,5 +1,13 @@
 # Senso MCP — Changelog
 
+## 1.3.1 - 2026-10-17
+### Security
+- The right to use the API (`core.login.api`) and the account status are now checked on every request and at every token refresh, not only when the connection was approved.
+- OAuth connections now have a maximum lifetime (new option, 90 days by default): after that, the assistant asks the user to authorize again.
+- Dynamic OAuth client registration is rate-limited per IP address (new options: per hour and per day), and client names are cleaned before being shown on the consent page.
+- Article version tools now only accept article versions, check the rights on that article (authors can manage the history of their own articles), and restore through the Joomla article form.
+- Article links A/B/C and URL menu items no longer accept links with an executable scheme.
+
 ## 1.3.0 - 2026-10-16
 ### Security
 - Permission checks now mirror the Joomla administrator more closely: content written through MCP goes through the Joomla forms and text filters, publishing fields (state, dates, featured, author) require the matching rights, and tools acting on administration areas require access to the corresponding manager. Accounts with limited rights may therefore see fewer tools, or get their articles created unpublished, exactly as in the administrator.

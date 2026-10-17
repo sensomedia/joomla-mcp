@@ -39,12 +39,26 @@ final class RateLimiter
         $max    = max(1, (int) $params->get('ratelimit_max', 120));
         $window = max(1, (int) $params->get('ratelimit_window', 60));
 
+        return self::hit($userId > 0 ? 'u:' . $userId : 'ip:' . $ip, $max, $window, $weight);
+    }
+
+    /**
+     * Compteur générique à fenêtre fixe : `$weight` hits sur la clé `$key` ; renvoie
+     * null si sous `$max` dans la fenêtre de `$window` secondes, sinon ['retry_after' => s].
+     * Fail-open (jamais d'exception). Clés : `u:<id>` / `ip:<ip>` (MCP), `dcr:<ip>` (DCR, audit M2).
+     */
+    public static function hit(string $key, int $max, int $window, int $weight = 1): ?array
+    {
+        $max    = max(1, $max);
+        $window = max(1, $window);
+        $weight = max(1, $weight);
+
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
 
             $now      = time();
             $winStart = $now - ($now % $window);
-            $key      = $db->quote($userId > 0 ? 'u:' . $userId : 'ip:' . $ip);
+            $key      = $db->quote(substr($key, 0, 191));
             $table    = $db->quoteName('#__sensomcp_ratelimit');
 
             // Incrément atomique ; réinitialise à 1 quand la fenêtre a tourné.

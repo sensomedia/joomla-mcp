@@ -71,11 +71,23 @@ final class SensomcpChangelog extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        $type   = $app->input->getCmd('type', 'component');
-        $folder = $app->input->getCmd('folder', '');
-        $catid  = $app->input->getInt('catid', 0);
+        $catid = $app->input->getInt('catid', 0);
 
-        $xml = $this->render($catid, $element, $type, $folder);
+        // Le flux de mise à jour ARS de la catégorie est la source de vérité : élément, type
+        // et dossier en sont tirés (Joomla ne lit que la version dans ce XML) et la clé de
+        // cache se réduit à `catid` — au plus une entrée par flux, rien n'est mis en cache
+        // pour une catégorie inconnue (audit M7).
+        $stream = self::streamFor($catid);
+
+        if ($stream === null) {
+            $app->setHeader('status', 404, true);
+            $app->setHeader('Content-Type', 'text/plain; charset=utf-8', true);
+            $app->sendHeaders();
+            echo 'Unknown changelog.';
+            $app->close();
+        }
+
+        $xml = $this->render($catid, $stream['element'], $stream['type'], $stream['folder']);
 
         $app->setHeader('Content-Type', 'application/xml; charset=utf-8', true);
         $app->setHeader('Access-Control-Allow-Origin', '*', true);
@@ -108,11 +120,56 @@ final class SensomcpChangelog extends CMSPlugin implements SubscriberInterface
             return (string) $cache->get(
                 [self::class, 'buildXml'],
                 [$catid, $element, $type, $folder],
-                md5($catid . '|' . $element . '|' . $type . '|' . $folder)
+                'cat' . $catid
             );
         } catch (\Throwable) {
             return self::buildXml($catid, $element, $type, $folder);
         }
+    }
+
+    /** Types ARS (pluriel) → type de manifeste Joomla. */
+    private const STREAM_TYPES = [
+        'components' => 'component', 'plugins' => 'plugin', 'modules' => 'module', 'packages' => 'package',
+        'libraries' => 'library', 'files' => 'file', 'templates' => 'template', 'languages' => 'language',
+    ];
+
+    /**
+     * Flux de mise à jour ARS publié d'une catégorie, ou null.
+     *
+     * @return array{element: string, type: string, folder: string}|null
+     */
+    private static function streamFor(int $catid): ?array
+    {
+        if ($catid <= 0) {
+            return null;
+        }
+
+        try {
+            $db  = Factory::getContainer()->get(DatabaseInterface::class);
+            $row = $db->setQuery(
+                $db->getQuery(true)
+                    ->select($db->quoteName(['element', 'type', 'folder']))
+                    ->from($db->quoteName('#__ars_updatestreams'))
+                    ->where($db->quoteName('category') . ' = :catid')
+                    ->where($db->quoteName('published') . ' = 1')
+                    ->order($db->quoteName('id') . ' ASC')
+                    ->bind(':catid', $catid, \Joomla\Database\ParameterType::INTEGER),
+                0,
+                1
+            )->loadAssoc();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if (!$row || (string) $row['element'] === '') {
+            return null;
+        }
+
+        return [
+            'element' => (string) $row['element'],
+            'type'    => self::STREAM_TYPES[(string) $row['type']] ?? (string) $row['type'],
+            'folder'  => (string) $row['folder'],
+        ];
     }
 
     /**

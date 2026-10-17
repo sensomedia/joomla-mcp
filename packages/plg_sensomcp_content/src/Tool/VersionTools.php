@@ -11,8 +11,10 @@ use Joomla\CMS\Form\Form;
 use Joomla\CMS\User\User;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\UrlGuard;
 
 \defined('_JEXEC') or die;
 
@@ -44,7 +46,7 @@ final class VersionTools
             ],
             fn (array $a) => $this->listVersions((int) ($a['article_id'] ?? 0)),
             'content.read',
-            ['acl' => ['core.edit', 'com_content']]
+            ['acl' => $this->aclArticle()]
         );
 
         $registry->register(
@@ -57,7 +59,7 @@ final class VersionTools
             ],
             fn (array $a) => $this->getVersion((int) ($a['version_id'] ?? 0)),
             'content.read',
-            ['acl' => ['core.edit', 'com_content']]
+            ['acl' => $this->aclVersion()]
         );
 
         $registry->register(
@@ -74,7 +76,7 @@ final class VersionTools
             ],
             fn (array $a) => $this->diffVersions((int) ($a['version_id_1'] ?? 0), (int) ($a['version_id_2'] ?? 0)),
             'content.read',
-            ['acl' => ['core.edit', 'com_content']]
+            ['acl' => $this->aclVersion()]
         );
 
         if (!$this->allowWrite) {
@@ -93,7 +95,7 @@ final class VersionTools
             ],
             fn (array $a) => $this->restoreVersion((int) ($a['version_id'] ?? 0)),
             'content.write',
-            ['acl' => ['core.edit', 'com_content']]
+            ['acl' => $this->aclVersion()]
         );
 
         $registry->register(
@@ -109,7 +111,7 @@ final class VersionTools
             ],
             fn (array $a) => $this->keepVersion((int) ($a['version_id'] ?? 0), (bool) ($a['keep'] ?? true)),
             'content.write',
-            ['acl' => ['core.edit', 'com_content']]
+            ['acl' => $this->aclVersion()]
         );
 
         $registry->register(
@@ -122,7 +124,7 @@ final class VersionTools
             ],
             fn (array $a) => $this->deleteVersion((int) ($a['version_id'] ?? 0)),
             'content.write',
-            ['acl' => ['core.edit', 'com_content']]
+            ['acl' => $this->aclVersion()]
         );
     }
 
@@ -131,6 +133,79 @@ final class VersionTools
     private function db(): DatabaseInterface
     {
         return Factory::getContainer()->get(DatabaseInterface::class);
+    }
+
+    /** ACL : l'outil cible un article (`article_id`) → core.edit, ou core.edit.own pour l'auteur. */
+    private function aclArticle(): \Closure
+    {
+        return function (User $me, array $a): bool {
+            $id = (int) ($a['article_id'] ?? 0);
+
+            if ($id <= 0) {
+                return $me->authorise('core.edit', 'com_content') || $me->authorise('core.edit.own', 'com_content');
+            }
+
+            return $this->canEditArticle($me, $id);
+        };
+    }
+
+    /** ACL : l'outil cible une version (`version_id`) → même règle sur l'article auquel elle appartient. */
+    private function aclVersion(): \Closure
+    {
+        return function (User $me, array $a): bool {
+            $vid = (int) ($a['version_id'] ?? $a['version_id_1'] ?? 0);
+
+            if ($vid <= 0) {
+                return $me->authorise('core.edit', 'com_content') || $me->authorise('core.edit.own', 'com_content');
+            }
+
+            $ok = $this->canEditArticle($me, $this->articleOfVersion($vid));
+
+            if ($ok && isset($a['version_id_2'])) {
+                $ok = $this->canEditArticle($me, $this->articleOfVersion((int) $a['version_id_2']));
+            }
+
+            return $ok;
+        };
+    }
+
+    private function canEditArticle(User $me, int $articleId): bool
+    {
+        $db = $this->db();
+        $by = (int) $db->setQuery(
+            $db->getQuery(true)->select($db->quoteName('created_by'))->from($db->quoteName('#__content'))
+                ->where($db->quoteName('id') . ' = :id')->bind(':id', $articleId, ParameterType::INTEGER)
+        )->loadResult();
+
+        return FormGate::canEdit($me, 'com_content.article.' . $articleId, $by);
+    }
+
+    /**
+     * Article auquel appartient une version : la table d'historique est partagée par tous les
+     * composants, on n'accepte que `com_content.article.<id>` (audit M5). Lève si la version
+     * n'existe pas ou n'est pas celle d'un article.
+     */
+    private function articleOfVersion(int $versionId): int
+    {
+        if ($versionId <= 0) {
+            throw new McpToolException('A valid version_id is required.');
+        }
+
+        $db     = $this->db();
+        $itemId = (string) $db->setQuery(
+            $db->getQuery(true)->select($db->quoteName('item_id'))->from($db->quoteName('#__history'))
+                ->where($db->quoteName('version_id') . ' = :id')->bind(':id', $versionId, ParameterType::INTEGER)
+        )->loadResult();
+
+        if ($itemId === '') {
+            throw new McpToolException('Version not found: ' . $versionId);
+        }
+
+        if (!preg_match('/^' . preg_quote(self::TYPE_ALIAS, '/') . '\.(\d+)$/', $itemId, $m)) {
+            throw new McpToolException('Version ' . $versionId . ' is not an article version.');
+        }
+
+        return (int) $m[1];
     }
 
     private function listVersions(int $articleId): array
@@ -154,11 +229,17 @@ final class VersionTools
 
     private function getVersion(int $versionId): array
     {
-        return ['version_id' => $versionId, 'data' => $this->versionData($versionId)];
+        $articleId = $this->articleOfVersion($versionId);
+
+        return ['version_id' => $versionId, 'article_id' => $articleId, 'data' => $this->versionData($versionId)];
     }
 
     private function diffVersions(int $v1, int $v2): array
     {
+        if ($this->articleOfVersion($v1) !== $this->articleOfVersion($v2)) {
+            throw new McpToolException('Both versions must belong to the same article.');
+        }
+
         $a = $this->versionData($v1);
         $b = $this->versionData($v2);
 
@@ -183,22 +264,50 @@ final class VersionTools
 
     private function restoreVersion(int $versionId): array
     {
-        $data = $this->versionData($versionId);
-        $id   = (int) ($data['id'] ?? 0);
+        $articleId = $this->articleOfVersion($versionId);
+        $data      = $this->versionData($versionId);
+        $id        = (int) ($data['id'] ?? 0);
 
-        if ($id <= 0) {
-            throw new McpToolException('Version has no article id.');
+        if ($id !== $articleId) {
+            throw new McpToolException('Version ' . $versionId . ' does not match its article (' . $id . ' ≠ ' . $articleId . ').');
         }
 
-        // On rejoue le snapshot via le modèle Administrator (déclenche events/workflow).
+        // On rejoue le snapshot via le modèle Administrator (déclenche events/workflow), en
+        // passant par le formulaire d'article : filtres de texte, état/dates réservés à
+        // core.edit.state, created_by à core.manage com_users — comme une modification (audit M5).
         $model = Factory::getApplication()->bootComponent('com_content')
             ->getMVCFactory()->createModel('Article', 'Administrator', ['ignore_request' => true]);
+        $current = $model->getItem($id);
 
-        Form::addFormPath(JPATH_ADMINISTRATOR . '/components/com_content/forms');
-
-        if (method_exists($model, 'getForm')) {
-            $model->getForm($data, false);
+        if (!$current || !$current->id) {
+            throw new McpToolException('Article not found: ' . $id);
         }
+
+        FormGate::useAdminForms('com_content');
+        $form = $model->getForm($data, false);
+
+        if (!$form instanceof Form) {
+            throw new McpToolException('Could not load the article form.');
+        }
+
+        $db   = $this->db();
+        $tags = array_map('strval', $db->setQuery(
+            $db->getQuery(true)->select($db->quoteName('tag_id'))->from($db->quoteName('#__contentitem_tag_map'))
+                ->where($db->quoteName('type_alias') . ' = ' . $db->quote(self::TYPE_ALIAS))
+                ->where($db->quoteName('content_item_id') . ' = :id')->bind(':id', $id, ParameterType::INTEGER)
+        )->loadColumn() ?: []);
+
+        // Les liens A/B/C (`urls`) sont restaurés hors formulaire, comme update_article les
+        // écrit (liens relatifs permis), avec le même nettoyage de schéma.
+        $snapshot = array_intersect_key($data, array_flip([
+            'id', 'title', 'alias', 'introtext', 'fulltext', 'catid', 'state', 'language', 'metadesc', 'metakey',
+            'images', 'attribs', 'metadata', 'access', 'publish_up', 'publish_down', 'featured', 'created', 'created_by', 'created_by_alias', 'note',
+        ]));
+        $snapshot['tags'] = $tags;
+        $gate    = FormGate::apply($form, $snapshot, FormGate::itemData($current), ['id', 'tags'], null, ['created', 'publish_up', 'publish_down']);
+        $data    = $gate['data'];
+        $ignored = $gate['ignored'];
+        unset($data['urls']);
 
         if (!$model->save($data)) {
             $errors = method_exists($model, 'getErrors') ? $model->getErrors() : [$model->getError()];
@@ -207,12 +316,33 @@ final class VersionTools
             throw new McpToolException('Restore failed: ' . ($errors ? implode(' | ', $errors) : 'unknown error'));
         }
 
-        return ['ok' => true, 'article_id' => $id, 'restored_from_version' => $versionId];
+        $raw  = $this->versionData($versionId)['urls'] ?? null;
+        $raw  = \is_string($raw) ? (array) json_decode($raw, true) : (array) $raw;
+
+        if ($raw !== []) {
+            foreach (['a', 'b', 'c'] as $k) {
+                if (isset($raw['url' . $k]) && (string) $raw['url' . $k] !== '') {
+                    $raw['url' . $k] = UrlGuard::cleanEditorialLink((string) $raw['url' . $k], 'link ' . $k);
+                }
+            }
+
+            $json = json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $db->setQuery(
+                $db->getQuery(true)->update($db->quoteName('#__content'))
+                    ->set($db->quoteName('urls') . ' = :urls')
+                    ->where($db->quoteName('id') . ' = :id')
+                    ->bind(':urls', $json)->bind(':id', $id, ParameterType::INTEGER)
+            )->execute();
+        }
+
+        $out = ['ok' => true, 'article_id' => $id, 'restored_from_version' => $versionId];
+
+        return $ignored ? $out + ['ignored' => $ignored] : $out;
     }
 
     private function keepVersion(int $versionId, bool $keep): array
     {
-        $this->assertVersionExists($versionId);
+        $this->articleOfVersion($versionId);
 
         $db  = $this->db();
         $val = $keep ? 1 : 0;
@@ -230,7 +360,7 @@ final class VersionTools
 
     private function deleteVersion(int $versionId): array
     {
-        $this->assertVersionExists($versionId);
+        $this->articleOfVersion($versionId);
 
         $db = $this->db();
         $q  = $db->getQuery(true)

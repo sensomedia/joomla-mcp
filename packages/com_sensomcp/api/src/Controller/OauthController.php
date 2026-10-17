@@ -6,8 +6,10 @@
 
 namespace Sensomedia\Component\Sensomcp\Api\Controller;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Controller\BaseController;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\RateLimiter;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\ClientStore;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\CodeStore;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\Metadata;
@@ -59,13 +61,35 @@ class OauthController extends BaseController
     public function register(): void
     {
         try {
+            // Enregistrement dynamique public (RFC 7591) : limité par IP (audit M2) —
+            // par heure (rafale) et par 24 h (accumulation lente), valeurs dans les options.
+            $app    = Factory::getApplication();
+            $ip     = (string) $app->getInput()->server->get('REMOTE_ADDR', '', 'string');
+            $params = ComponentHelper::getParams('com_sensomcp');
+            $hour   = (int) $params->get('oauth_register_max_hour', 10);
+            $day    = (int) $params->get('oauth_register_max_day', 50);
+
+            if ($hour > 0 && ($rl = RateLimiter::hit('dcr:' . $ip, $hour, 3600)) !== null) {
+                $this->json(429, ['error' => 'temporarily_unavailable', 'error_description' => 'Too many client registrations, retry later'], ['Retry-After' => (string) $rl['retry_after']]);
+
+                return;
+            }
+
+            $store = new ClientStore();
+
+            if ($day > 0 && $store->countRegisteredFromIp($ip, 86400) >= $day) {
+                $this->json(429, ['error' => 'temporarily_unavailable', 'error_description' => 'Too many client registrations from this address today'], ['Retry-After' => '3600']);
+
+                return;
+            }
+
             $body = json_decode(file_get_contents('php://input') ?: '', true);
 
             if (!\is_array($body)) {
                 throw new OAuthException('invalid_client_metadata', 'Corps JSON invalide');
             }
 
-            $client = (new ClientStore())->register($body);
+            $client = $store->register($body, $ip);
             $this->json(201, $client);
         } catch (OAuthException $e) {
             $this->oauthError($e);
@@ -155,8 +179,13 @@ class OauthController extends BaseController
             throw new OAuthException('invalid_grant', 'Refresh token invalide');
         }
 
+        // Droits revérifiés à chaque rotation + durée absolue de la connexion (audit M1).
+        if (($why = $refreshS->renewalRefusal($row)) !== null) {
+            throw new OAuthException('invalid_grant', $why);
+        }
+
         $audience = $row->resource !== '' ? $row->resource : Metadata::mcpResource();
-        $this->issueTokens($tokens, $refreshS, (int) $row->user_id, $clientId, (string) $row->scope, $audience);
+        $this->issueTokens($tokens, $refreshS, (int) $row->user_id, $clientId, (string) $row->scope, $audience, (string) ($row->origin ?: $row->created));
     }
 
     private function issueTokens(
@@ -165,10 +194,11 @@ class OauthController extends BaseController
         int $userId,
         string $clientId,
         string $scope,
-        string $audience
+        string $audience,
+        ?string $origin = null
     ): void {
         [$access, $expiresIn] = $tokens->issueAccessToken($userId, $clientId, $scope, $audience);
-        $refresh              = $refreshS->create($clientId, $userId, $scope, $audience);
+        $refresh              = $refreshS->create($clientId, $userId, $scope, $audience, $origin);
 
         $this->json(200, [
             'access_token'  => $access,

@@ -27,7 +27,7 @@ final class ClientStore
      *
      * @param array $meta  Données de la requête RFC 7591 (redirect_uris, client_name, …)
      */
-    public function register(array $meta): array
+    public function register(array $meta, string $ip = ''): array
     {
         $redirectUris = $meta['redirect_uris'] ?? [];
 
@@ -58,11 +58,12 @@ final class ClientStore
         $row = (object) [
             'client_id'                  => $clientId,
             'client_secret'              => $secretHash,
-            'client_name'                => substr((string) ($meta['client_name'] ?? 'MCP Client'), 0, 255),
+            'client_name'                => self::cleanName((string) ($meta['client_name'] ?? '')),
             'redirect_uris'              => json_encode(array_values($redirectUris), JSON_UNESCAPED_SLASHES),
             'grant_types'                => 'authorization_code refresh_token',
             'token_endpoint_auth_method' => $authMethod,
             'created'                    => $now,
+            'created_ip'                 => substr($ip, 0, 45),
         ];
 
         $db->insertObject('#__sensomcp_oauth_clients', $row);
@@ -81,6 +82,41 @@ final class ClientStore
         }
 
         return $out;
+    }
+
+    /**
+     * Nom de client affiché au consentement : balises et caractères de contrôle retirés,
+     * espaces normalisés, 100 caractères max, « MCP Client » si vide (audit M2).
+     */
+    public static function cleanName(string $name): string
+    {
+        $name = strip_tags($name);
+        $name = (string) preg_replace('/[\x00-\x1F\x7F\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}]/u', '', $name);
+        $name = trim((string) preg_replace('/\s+/u', ' ', $name));
+
+        return $name === '' ? 'MCP Client' : mb_substr($name, 0, 100);
+    }
+
+    /** Nombre de clients enregistrés depuis cette IP dans les `$seconds` dernières secondes. */
+    public function countRegisteredFromIp(string $ip, int $seconds): int
+    {
+        if ($ip === '') {
+            return 0;
+        }
+
+        $db = $this->db();
+        $q  = $db->getQuery(true)
+            ->select('COUNT(*)')
+            ->from($db->quoteName('#__sensomcp_oauth_clients'))
+            ->where($db->quoteName('created_ip') . ' = :ip')
+            ->where($db->quoteName('created') . ' >= ' . $db->quote(Factory::getDate('-' . max(1, $seconds) . ' seconds')->toSql()))
+            ->bind(':ip', $ip);
+
+        try {
+            return (int) $db->setQuery($q)->loadResult();
+        } catch (\Throwable) {
+            return 0; // colonne absente (schéma non migré) : fail-open
+        }
     }
 
     public function find(string $clientId): ?object

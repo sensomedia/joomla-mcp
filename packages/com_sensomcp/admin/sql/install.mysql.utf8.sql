@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS `#__sensomcp_oauth_clients` (
     `grant_types`                VARCHAR(255)  NOT NULL DEFAULT 'authorization_code refresh_token',
     `token_endpoint_auth_method` VARCHAR(50)   NOT NULL DEFAULT 'none',
     `created`                    DATETIME      NOT NULL,
+    `created_ip`                 VARCHAR(45)   NULL DEFAULT NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `idx_client_id` (`client_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS `#__sensomcp_oauth_refresh` (
     `expires`    DATETIME      NOT NULL,
     `revoked`    TINYINT(1)    NOT NULL DEFAULT 0,
     `created`    DATETIME      NOT NULL,
+    `origin`     DATETIME      NULL DEFAULT NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `idx_token_hash` (`token_hash`),
     KEY `idx_user_client` (`user_id`, `client_id`)

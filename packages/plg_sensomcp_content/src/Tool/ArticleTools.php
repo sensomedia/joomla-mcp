@@ -17,6 +17,7 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\Ordering;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\Pagination;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\UrlGuard;
 use Sensomedia\Plugin\Sensomcp\Content\Support\ResolvesPublicUrls;
 
 \defined('_JEXEC') or die;
@@ -573,7 +574,8 @@ final class ArticleTools
             }
 
             if (\array_key_exists('url', $link)) {
-                $raw['url' . $k] = (string) $link['url'];
+                // Même nettoyage que le filtre URL du formulaire + refus des schémas exécutables (audit M5).
+                $raw['url' . $k] = UrlGuard::cleanEditorialLink((string) $link['url'], 'link ' . $k);
             }
 
             if (\array_key_exists('text', $link)) {
