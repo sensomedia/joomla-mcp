@@ -8,6 +8,7 @@ namespace Sensomedia\Component\Sensomcp\Administrator\OAuth;
 
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -36,7 +37,7 @@ final class RefreshStore
      * `$origin` = date du PREMIER refresh token de la chaîne (recopiée à chaque rotation) ;
      * null = nouvelle chaîne (consentement). Sert à la durée absolue d'une connexion.
      */
-    public function create(string $clientId, int $userId, string $scope, string $resource, ?string $origin = null): string
+    public function create(string $clientId, int $userId, string $scope, string $resource, ?string $origin = null, ?string $family = null): string
     {
         $token = $this->tokens->opaque(32);
         $db    = $this->db();
@@ -52,6 +53,8 @@ final class RefreshStore
             'revoked'    => 0,
             'created'    => $now,
             'origin'     => $origin ?: $now,
+            // Lignée : identifiant partagé par toute la chaîne de rotation d'une autorisation.
+            'family'     => $family ?: bin2hex(random_bytes(16)),
         ];
 
         $db->insertObject('#__sensomcp_oauth_refresh', $row);
@@ -105,20 +108,81 @@ final class RefreshStore
 
         $row = $db->setQuery($query)->loadObject();
 
-        // `expires` en UTC → reparse UTC via Factory::getDate() (cf. CodeStore) :
-        // strtotime() utiliserait le fuseau local → tokens vus « expirés » hors UTC.
-        if (!$row || (int) $row->revoked === 1 || Factory::getDate($row->expires)->toUnix() < time()) {
+        if (!$row) {
             return null;
         }
 
-        // Rotation : on révoque l'ancien.
+        // Jeton déjà consommé représenté à nouveau : rejeu (audit, réutilisation).
+        if ((int) $row->revoked === 1) {
+            $this->onReplay($row);
+
+            return null;
+        }
+
+        // `expires` en UTC → reparse UTC via Factory::getDate() (cf. CodeStore) :
+        // strtotime() utiliserait le fuseau local → tokens vus « expirés » hors UTC.
+        if (Factory::getDate($row->expires)->toUnix() < time()) {
+            return null;
+        }
+
+        // Rotation : on révoque l'ancien et on date sa consommation.
+        $now = Factory::getDate()->toSql();
         $upd = $db->getQuery(true)
             ->update($db->quoteName('#__sensomcp_oauth_refresh'))
             ->set($db->quoteName('revoked') . ' = 1')
+            ->set($db->quoteName('consumed') . ' = :now')
             ->where($db->quoteName('id') . ' = :id')
+            ->bind(':now', $now, ParameterType::STRING)
             ->bind(':id', $row->id, ParameterType::INTEGER);
         $db->setQuery($upd)->execute();
 
         return $row;
+    }
+
+    /**
+     * Un jeton consommé est présenté une seconde fois. Dans le délai de grâce
+     * (`oauth_replay_grace`, 60 s) : client qui rejoue après une réponse perdue →
+     * simple refus. Au-delà : le jeton a été copié → toute la lignée (même
+     * utilisateur, même client, même autorisation d'origine) est révoquée, le client
+     * légitime devra réautoriser. Une ligne révoquée sans date de consommation
+     * (révocation de lignée, déconnexion) n'est pas un rejeu.
+     */
+    private function onReplay(object $row): void
+    {
+        if (empty($row->consumed) || str_starts_with((string) $row->consumed, '0000')) {
+            return;
+        }
+
+        $grace = max(0, (int) ComponentHelper::getParams('com_sensomcp')->get('oauth_replay_grace', 60));
+
+        if (Factory::getDate($row->consumed)->toUnix() + $grace >= time()) {
+            return;
+        }
+
+        $db     = $this->db();
+        $family = (string) ($row->family ?? '');
+
+        if ($family === '') {
+            return;
+        }
+
+        $upd = $db->getQuery(true)
+            ->update($db->quoteName('#__sensomcp_oauth_refresh'))
+            ->set($db->quoteName('revoked') . ' = 1')
+            ->where($db->quoteName('revoked') . ' = 0')
+            ->where($db->quoteName('family') . ' = :family')
+            ->bind(':family', $family, ParameterType::STRING);
+        $db->setQuery($upd)->execute();
+        $n = (int) $db->getAffectedRows();
+
+        try {
+            Log::add(
+                \sprintf('OAuth refresh token replay: user %d, client %s, family %s — %d active token(s) of the chain revoked', (int) $row->user_id, (string) $row->client_id, $family, $n),
+                Log::WARNING,
+                'com_sensomcp'
+            );
+        } catch (\Throwable) {
+            // journalisation best-effort
+        }
     }
 }

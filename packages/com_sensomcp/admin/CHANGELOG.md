@@ -1,5 +1,10 @@
 # Senso MCP — Changelog
 
+## 1.3.2 - 2026-10-17
+### Security
+- A refresh token presented again after it was already used now revokes the whole connection (new option: grace delay for network retries, 60 s by default); the assistant then asks to authorize again.
+- The cleanup task keeps used refresh tokens for a few days (new option) so that such a reuse can be detected.
+
 ## 1.3.1 - 2026-10-17
 ### Security
 - The right to use the API (`core.login.api`) and the account status are now checked on every request and at every token refresh, not only when the connection was approved.

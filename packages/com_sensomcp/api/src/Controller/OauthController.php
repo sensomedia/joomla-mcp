@@ -185,7 +185,7 @@ class OauthController extends BaseController
         }
 
         $audience = $row->resource !== '' ? $row->resource : Metadata::mcpResource();
-        $this->issueTokens($tokens, $refreshS, (int) $row->user_id, $clientId, (string) $row->scope, $audience, (string) ($row->origin ?: $row->created));
+        $this->issueTokens($tokens, $refreshS, (int) $row->user_id, $clientId, (string) $row->scope, $audience, (string) ($row->origin ?: $row->created), (string) ($row->family ?? ''));
     }
 
     private function issueTokens(
@@ -195,10 +195,11 @@ class OauthController extends BaseController
         string $clientId,
         string $scope,
         string $audience,
-        ?string $origin = null
+        ?string $origin = null,
+        ?string $family = null
     ): void {
         [$access, $expiresIn] = $tokens->issueAccessToken($userId, $clientId, $scope, $audience);
-        $refresh              = $refreshS->create($clientId, $userId, $scope, $audience, $origin);
+        $refresh              = $refreshS->create($clientId, $userId, $scope, $audience, $origin, $family);
 
         $this->json(200, [
             'access_token'  => $access,

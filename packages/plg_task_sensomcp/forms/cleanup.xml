@@ -20,6 +20,13 @@
                 min="0"
                 filter="integer"
             />
+            <field
+                name="refresh_revoked_retention_days"
+                type="number"
+                label="PLG_TASK_SENSOMCP_CLEANUP_REFRESH_RETENTION_LABEL"
+                description="PLG_TASK_SENSOMCP_CLEANUP_REFRESH_RETENTION_DESC"
+                default="7"
+                min="0" />
         </fieldset>
     </fields>
 </form>

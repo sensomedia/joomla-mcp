@@ -40,11 +40,14 @@ CREATE TABLE IF NOT EXISTS `#__sensomcp_oauth_refresh` (
     `resource`   VARCHAR(1024) NOT NULL DEFAULT '',
     `expires`    DATETIME      NOT NULL,
     `revoked`    TINYINT(1)    NOT NULL DEFAULT 0,
+    `consumed`   DATETIME      NULL DEFAULT NULL,
     `created`    DATETIME      NOT NULL,
     `origin`     DATETIME      NULL DEFAULT NULL,
+    `family`     CHAR(32)      NULL DEFAULT NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `idx_token_hash` (`token_hash`),
-    KEY `idx_user_client` (`user_id`, `client_id`)
+    KEY `idx_user_client` (`user_id`, `client_id`),
+    KEY `idx_family` (`family`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `#__sensomcp_log` (

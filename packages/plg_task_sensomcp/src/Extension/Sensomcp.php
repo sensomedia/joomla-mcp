@@ -63,9 +63,15 @@ final class Sensomcp extends CMSPlugin implements SubscriberInterface
         );
         $log[] = "OAuth codes expirés purgés : $codes";
 
-        $refresh = $this->deleteWhere(
+        // Les jetons consommés sont gardés N jours : c'est ce qui permet de détecter le
+        // rejeu d'un jeton copié (RefreshStore::onReplay). Les autres révoqués partent.
+        $revokedDays = max(0, (int) ($params->refresh_revoked_retention_days ?? 7));
+        $refresh     = $this->deleteWhere(
             '#__sensomcp_oauth_refresh',
-            '(' . $db->quoteName('expires') . ' < UTC_TIMESTAMP() OR ' . $db->quoteName('revoked') . ' = 1)'
+            '(' . $db->quoteName('expires') . ' < UTC_TIMESTAMP() OR ('
+            . $db->quoteName('revoked') . ' = 1 AND ('
+            . $db->quoteName('consumed') . ' IS NULL OR '
+            . $db->quoteName('consumed') . ' < UTC_TIMESTAMP() - INTERVAL ' . $revokedDays . ' DAY)))'
         );
         $log[] = "Refresh tokens expirés/révoqués purgés : $refresh";
 

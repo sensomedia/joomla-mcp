@@ -61,6 +61,14 @@
             min="0" />
 
         <field
+            name="oauth_replay_grace"
+            type="number"
+            label="COM_SENSOMCP_OAUTH_REPLAY_GRACE_LABEL"
+            description="COM_SENSOMCP_OAUTH_REPLAY_GRACE_DESC"
+            default="60"
+            min="0" />
+
+        <field
             name="oauth_register_max_hour"
             type="number"
             label="COM_SENSOMCP_OAUTH_REGISTER_MAX_HOUR_LABEL"
