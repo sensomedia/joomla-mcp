@@ -115,6 +115,52 @@ final class DebugLog
         }
     }
 
+    /**
+     * Journalise une exception INATTENDUE (ni McpToolException ni OAuthException)
+     * sous un identifiant de corrélation, TOUJOURS (indépendant du mode debug) :
+     * le client ne reçoit qu'un message générique portant cet identifiant, le
+     * détail (classe, message, fichier:ligne) va dans administrator/logs/com_sensomcp.log.php.
+     * Renvoie l'identifiant.
+     */
+    public static function internal(\Throwable $e, string $context = ''): string
+    {
+        $ref = bin2hex(random_bytes(4));
+
+        try {
+            self::ensureLogger();
+
+            Log::add(
+                'ref=' . $ref . ($context !== '' ? ' ' . $context : '')
+                . ' error=' . $e::class . ': ' . substr($e->getMessage(), 0, self::MAX_LEN)
+                . ' at ' . str_replace(JPATH_ROOT . '/', '', $e->getFile()) . ':' . $e->getLine(),
+                Log::ERROR,
+                'com_sensomcp'
+            );
+        } catch (\Throwable) {
+            // Le journal ne doit jamais casser le service.
+        }
+
+        return $ref;
+    }
+
+    /** Note d'information TOUJOURS journalisée (diagnostics d'options expérimentales). */
+    public static function note(string $message): void
+    {
+        try {
+            self::ensureLogger();
+            Log::add($message, Log::INFO, 'com_sensomcp');
+        } catch (\Throwable) {
+            // best-effort
+        }
+    }
+
+    /** Résumé court d'une exception pour le journal MCP en base (colonne error, 255 car.). */
+    public static function summary(\Throwable $e, string $ref): string
+    {
+        return 'ref=' . $ref . ' ' . $e::class . ': ' . substr($e->getMessage(), 0, 160)
+            . ' @ ' . basename($e->getFile()) . ':' . $e->getLine();
+    }
+
     private static function ensureLogger(): void
     {
         if (self::$loggerUp) {

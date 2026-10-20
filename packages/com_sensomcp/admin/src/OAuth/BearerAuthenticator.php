@@ -28,7 +28,7 @@ final class BearerAuthenticator
     private const ALLOWED_ALGOS = ['sha256', 'sha512'];
 
     /**
-     * @return array{user_id:int, scopes:string[]}|null
+     * @return array{user_id:int, scopes:string[], client_id:string}|null  client_id vide pour un jeton API Joomla.
      */
     public function authenticate(): ?array
     {
@@ -67,7 +67,7 @@ final class BearerAuthenticator
 
             $scopes = array_values(array_filter(explode(' ', (string) ($claims['scope'] ?? ''))));
 
-            return ['user_id' => $uid, 'scopes' => $scopes];
+            return ['user_id' => $uid, 'scopes' => $scopes, 'client_id' => (string) ($claims['client_id'] ?? '')];
         } catch (OAuthException) {
             // Pas un JWT valide → on tente le jeton Joomla.
         }
@@ -88,7 +88,7 @@ final class BearerAuthenticator
             return null;
         }
 
-        return ['user_id' => $uid, 'scopes' => ['*']];
+        return ['user_id' => $uid, 'scopes' => ['*'], 'client_id' => ''];
     }
 
     private function bearerToken(): string

@@ -6,6 +6,8 @@
 
 namespace Sensomedia\Component\Sensomcp\Api\Mcp;
 
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
+
 \defined('_JEXEC') or die;
 
 /**
@@ -54,7 +56,7 @@ final class PromptProvider
             'draft_article'     => $this->draftArticle($args),
             'seo_audit'         => $this->seoAudit($args),
             'translate_article' => $this->translateArticle($args),
-            default             => throw new \RuntimeException('Unknown prompt: ' . $name),
+            default             => throw new McpToolException('Unknown prompt: ' . $name),
         };
 
         return [

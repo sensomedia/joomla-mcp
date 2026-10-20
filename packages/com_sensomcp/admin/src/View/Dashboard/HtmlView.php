@@ -22,6 +22,7 @@ class HtmlView extends BaseHtmlView
     public array $topTools   = [];
     public array $topMethods = [];
     public array $recent     = [];
+    public array $stale      = [];
 
     public function display($tpl = null)
     {
@@ -31,6 +32,7 @@ class HtmlView extends BaseHtmlView
         $this->topTools   = $model->getTopTools();
         $this->topMethods = $model->getTopMethods();
         $this->recent     = $model->getRecent(30);
+        $this->stale      = $model->getStaleConnections();
 
         $this->theme = ThemeHelper::key();
         $this->themeMode = ThemeHelper::mode();

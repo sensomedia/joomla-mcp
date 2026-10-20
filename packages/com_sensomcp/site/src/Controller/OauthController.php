@@ -88,8 +88,9 @@ class OauthController extends BaseController
         $available = ToolCollector::scopesForUser($user);
         $requested = array_values(array_filter(explode(' ', $params['scope'])));
 
-        // Rien demandé → on propose tout ; puis on borne au catalogue réel.
-        if ($requested === []) {
+        // Rien demandé, ou le scope parapluie « mcp » (seul scope publié dans les
+        // métadonnées de découverte) → on propose tout ; puis on borne au catalogue réel.
+        if ($requested === [] || \in_array(Metadata::UMBRELLA_SCOPE, $requested, true)) {
             $requested = array_keys($available);
         }
 

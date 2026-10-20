@@ -96,6 +96,23 @@
         </field>
 
         <!--
+            Expérimental : quand la liste d'outils chargée par une connexion est
+            périmée, répondre en SSE avec `notifications/tools/list_changed` (spec MCP)
+            pour inviter le client à recharger ses outils. Désactivé par défaut tant
+            que la réaction des clients (claude.ai…) n'est pas confirmée.
+        -->
+        <field
+            name="list_changed_sse"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_SENSOMCP_LIST_CHANGED_SSE_LABEL"
+            description="COM_SENSOMCP_LIST_CHANGED_SSE_DESC"
+            default="0">
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+
+        <!--
             Arrêt d'urgence : réglable ICI (Options) OU via le bouton de la vue
             « Plugins et sécurité » — les deux écrivent le même param. DOIT rester
             déclaré (sinon un save d'Options effacerait la valeur, qui ne persiste

@@ -1,5 +1,19 @@
 # Senso MCP — Changelog
 
+## 1.4.0 - 2026-10-20
+### Added
+- Reconnection warning: MCP clients load the tool list once, at connection time, so tools added or changed afterwards (a new plugin, a new parameter, an updated description) stay invisible until the user disconnects then reconnects the connector. The server now remembers the tool list each connection loaded and, when it no longer matches, prepends a notice to the next tool result asking the assistant to tell the user to reconnect (once per hour at most). Connections established before this version are asked to reconnect once, as a catch-up, at their first tool call after the update.
+- Dashboard: a "Connections with an outdated tool list" panel lists the connections concerned, with a "Revoke" button for OAuth connections (forces re-authentication, hence a fresh tool list) and "Dismiss".
+- An administrator notice is shown right after installing or updating a Senso MCP tool plugin or package.
+- Experimental option (off by default): answer outdated connections with an SSE stream carrying the MCP `notifications/tools/list_changed` notification. In our tests claude.ai accepts the stream but does not reload its tools, so the option is only useful to try other MCP clients.
+
+## 1.3.3 - 2026-10-20
+### Security
+- Unexpected errors (PHP, database, file system) are no longer returned verbatim to the MCP client or to the public OAuth endpoints. The caller gets a generic message with a reference id; the full detail is written to the site MCP log file (`administrator/logs/com_sensomcp.log.php`) and summarized in the MCP request journal under the same reference.
+- The public OAuth discovery documents (`.well-known`) no longer list the scopes of every installed plugin: they only announce the generic `mcp` scope, which stands for everything the user may use at the consent step. This stops anonymous visitors from reading which paid plugins are installed, and stops the plugins from being loaded on every anonymous discovery request. Clients that request `mcp` (or nothing) are offered all available scopes, as before.
+### Changed
+- All extensions of the package now carry the package version number (the previous package shipped some plugins still labelled 1.3.1).
+
 ## 1.3.2 - 2026-10-17
 ### Security
 - A refresh token presented again after it was already used now revokes the whole connection (new option: grace delay for network retries, 60 s by default); the assistant then asks to authorize again.

@@ -12,6 +12,7 @@ use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\Router\Route;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\CatalogState;
 
 \defined('_JEXEC') or die;
 
@@ -130,6 +131,73 @@ class SecurityController extends BaseController
 
         $this->app->enqueueMessage(Text::_('COM_SENSOMCP_OAUTH_REVOKE_MSG'), 'warning');
         $this->setRedirect(Route::_('index.php?option=com_sensomcp&view=security', false));
+    }
+
+    /**
+     * Révoque UNE connexion OAuth (utilisateur + client) dont la liste d'outils
+     * chargée est périmée : ses refresh tokens sont marqués révoqués, le client
+     * devra se réauthentifier et rechargera ainsi le catalogue. Les access tokens
+     * déjà émis expirent d'eux-mêmes (courte durée). Jetons API Joomla : non concernés.
+     */
+    public function revokeConnection(): void
+    {
+        $this->checkToken();
+
+        $redirect = Route::_('index.php?option=com_sensomcp&view=dashboard', false);
+
+        if (!$this->app->getIdentity()->authorise('core.admin', 'com_sensomcp')) {
+            $this->setRedirect($redirect, Text::_('JERROR_ALLOWNOAUTHOR'), 'error');
+
+            return;
+        }
+
+        $key = (string) $this->input->getString('key', '');
+
+        if (!preg_match('/^oauth:([^:]+):(\d+)$/', $key, $m)) {
+            $this->setRedirect($redirect, Text::_('COM_SENSOMCP_STALE_NOT_OAUTH'), 'warning');
+
+            return;
+        }
+
+        $clientId = $m[1];
+        $userId   = (int) $m[2];
+        $db       = $this->db();
+
+        try {
+            $db->setQuery(
+                $db->getQuery(true)
+                    ->update($db->quoteName('#__sensomcp_oauth_refresh'))
+                    ->set($db->quoteName('revoked') . ' = 1')
+                    ->where($db->quoteName('client_id') . ' = :c')
+                    ->where($db->quoteName('user_id') . ' = :u')
+                    ->bind(':c', $clientId, ParameterType::STRING)
+                    ->bind(':u', $userId, ParameterType::INTEGER)
+            )->execute();
+        } catch (\Throwable) {
+            // best-effort
+        }
+
+        CatalogState::forget($key);
+
+        $this->app->enqueueMessage(Text::_('COM_SENSOMCP_STALE_REVOKE_MSG'), 'warning');
+        $this->setRedirect($redirect);
+    }
+
+    /** Retire une connexion de la liste des connexions périmées (sans la révoquer). */
+    public function forgetConnection(): void
+    {
+        $this->checkToken();
+
+        $redirect = Route::_('index.php?option=com_sensomcp&view=dashboard', false);
+
+        if (!$this->app->getIdentity()->authorise('core.admin', 'com_sensomcp')) {
+            $this->setRedirect($redirect, Text::_('JERROR_ALLOWNOAUTHOR'), 'error');
+
+            return;
+        }
+
+        CatalogState::forget((string) $this->input->getString('key', ''));
+        $this->setRedirect($redirect);
     }
 
     private function db(): DatabaseInterface

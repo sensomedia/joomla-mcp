@@ -83,6 +83,50 @@ foreach ($this->perDay as $day => $count) {
         <?php endforeach; ?>
     </div>
 
+    <?php if ($this->stale !== []) : ?>
+    <?php // --- Connexions dont la liste d'outils chargée est périmée (reconnexion nécessaire) --- ?>
+    <div class="card mb-4 border-warning" id="smcp-stale">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><?php echo Text::_('COM_SENSOMCP_STALE_CONNECTIONS'); ?></span>
+            <span class="badge bg-warning text-dark"><?php echo \count($this->stale); ?></span>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small"><?php echo Text::_('COM_SENSOMCP_STALE_CONNECTIONS_INTRO'); ?></p>
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th><?php echo Text::_('COM_SENSOMCP_STALE_USER'); ?></th>
+                        <th><?php echo Text::_('COM_SENSOMCP_STALE_CLIENT'); ?></th>
+                        <th><?php echo Text::_('COM_SENSOMCP_STALE_LISTED'); ?></th>
+                        <th><?php echo Text::_('COM_SENSOMCP_STALE_TOOLS'); ?></th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($this->stale as $c) : ?>
+                    <tr>
+                        <td><?php echo $this->escape($c['user']); ?></td>
+                        <td><?php echo $c['is_oauth'] ? $this->escape($c['client']) : '<span class="text-muted">' . Text::_('COM_SENSOMCP_STALE_API_TOKEN') . '</span>'; ?></td>
+                        <td><?php echo HTMLHelper::_('date', $c['listed'], Text::_('DATE_FORMAT_LC5')); ?><?php if ($c['assumed']) : ?> <span class="text-muted small" title="<?php echo Text::_('COM_SENSOMCP_STALE_ASSUMED_DESC'); ?>">(<?php echo Text::_('COM_SENSOMCP_STALE_ASSUMED'); ?>)</span><?php endif; ?></td>
+                        <td><?php echo (int) $c['tools_then']; ?> &rarr; <?php echo (int) $c['tools_now']; ?></td>
+                        <td class="text-end text-nowrap">
+                            <form method="post" action="<?php echo Route::_('index.php?option=com_sensomcp'); ?>" class="d-inline">
+                                <input type="hidden" name="key" value="<?php echo $this->escape($c['key']); ?>">
+                                <?php echo HTMLHelper::_('form.token'); ?>
+                                <?php if ($c['is_oauth']) : ?>
+                                <button type="submit" name="task" value="security.revokeConnection" class="btn btn-sm btn-outline-danger" onclick="return confirm('<?php echo $this->escape(Text::_('COM_SENSOMCP_STALE_REVOKE_CONFIRM')); ?>');"><?php echo Text::_('COM_SENSOMCP_STALE_REVOKE_BTN'); ?></button>
+                                <?php endif; ?>
+                                <button type="submit" name="task" value="security.forgetConnection" class="btn btn-sm btn-outline-secondary"><?php echo Text::_('COM_SENSOMCP_STALE_DISMISS_BTN'); ?></button>
+                            </form>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <div class="card mb-4">
         <div class="card-header"><?php echo Text::_('COM_SENSOMCP_REQUESTS_PER_DAY'); ?></div>
         <div class="card-body">

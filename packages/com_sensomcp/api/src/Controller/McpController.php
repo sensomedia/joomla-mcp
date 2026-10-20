@@ -6,13 +6,17 @@
 
 namespace Sensomedia\Component\Sensomcp\Api\Controller;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\User\User;
 use Joomla\CMS\User\UserFactoryInterface;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\CatalogState;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\DebugLog;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\RequestLog;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolCollector;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolState;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\RateLimiter;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\BearerAuthenticator;
@@ -103,7 +107,12 @@ class McpController extends BaseController
             return;
         }
 
-        $server = $this->buildServer($user, $auth['scopes']);
+        $registry = ToolCollector::collectFor($user, $auth['scopes']);
+        $server   = $this->buildServer($user, $auth['scopes'], $registry);
+
+        // Suivi du catalogue vu par cette connexion (avertissement de reconnexion).
+        $connKey     = CatalogState::key($auth);
+        $fingerprint = CatalogState::fingerprint($registry);
 
         // Lot JSON-RPC (tableau de messages) ou message unique.
         $isBatch  = \is_array($decoded) && array_is_list($decoded) && $decoded !== [];
@@ -148,6 +157,18 @@ class McpController extends BaseController
 
             $method = (string) ($message['method'] ?? '');
 
+            // Catalogue : mémorise ce que la connexion vient de charger, ou, sur un
+            // appel d'outil, prévient l'assistant si la liste chargée est périmée.
+            if ($method === 'tools/list' && isset($response['result'])) {
+                CatalogState::recordListed($connKey, $auth, $fingerprint);
+            } elseif ($method === 'tools/call' && isset($response['result']['content']) && \is_array($response['result']['content'])) {
+                $notice = CatalogState::staleNotice($connKey, $auth, $fingerprint);
+
+                if ($notice !== null) {
+                    array_unshift($response['result']['content'], ['type' => 'text', 'text' => $notice]);
+                }
+            }
+
             // La sonde `server/discover` reçoit -32601 par conception (serveur à
             // handshake, cf. Server::handle()) : ce n'est pas une erreur à journaliser.
             if ($method !== '' && $method !== 'server/discover') {
@@ -156,7 +177,9 @@ class McpController extends BaseController
                 $err     = null;
 
                 if (isset($response['error'])) {
-                    $err = (string) ($response['error']['message'] ?? 'error');
+                    // Exception inattendue : le journal MCP garde le détail (classe,
+                    // message, fichier) que le client n'a pas reçu, sous le même ref.
+                    $err = $server->takeInternalError() ?? (string) ($response['error']['message'] ?? 'error');
                 } elseif ($isError) {
                     $err = (string) ($response['result']['content'][0]['text'] ?? 'tool error');
                 }
@@ -178,31 +201,79 @@ class McpController extends BaseController
             return;
         }
 
+        // EXPÉRIMENTAL (option list_changed_sse) : si la connexion est périmée et que le
+        // client accepte le SSE, la réponse est envoyée en flux d'événements précédée
+        // de `notifications/tools/list_changed` (spec MCP) — pour mesurer si le client
+        // recharge alors sa liste d'outils (journal : un tools/list doit suivre).
+        if ($this->sseNotifyEnabled() && CatalogState::staleInfo($connKey, $fingerprint) !== null) {
+            $this->respondSse($app, $isBatch ? $out : $out[0], [
+                'jsonrpc' => '2.0',
+                'method'  => 'notifications/tools/list_changed',
+            ]);
+
+            return;
+        }
+
         $this->respond($app, $isBatch ? $out : $out[0]);
     }
 
     /**
      * @param string[] $scopes Scopes accordés au porteur du jeton.
      */
-    /**
-     * @param string[] $scopes Scopes accordés au porteur du jeton.
-     */
-    private function buildServer(User $user, array $scopes): Server
+    private function buildServer(User $user, array $scopes, ToolRegistry $registry): Server
     {
-        // Moteur pur : TOUS les outils viennent des plugins « sensomcp ».
-        $registry = ToolCollector::collect($user);
-
-        // Application des scopes : list()/call() sont filtrés en conséquence.
-        $registry->setGrantedScopes($scopes);
-
-        // Politique de sécurité : mode lecture seule global + états par outil
-        // (panneau « Plugins et sécurité »). list()/call() les respectent aussi.
-        $registry->setReadOnly(ToolState::isReadOnly());
-        $registry->setToolPolicy(ToolState::getMap());
-
+        // Moteur pur : TOUS les outils viennent des plugins « sensomcp » ; le registre
+        // (scopes, lecture seule, états par outil) est construit par ToolCollector::collectFor.
         // Ressources (articles) : mêmes règles de lecture que les outils (scope content.read,
         // niveaux d'accès, état/dates) — audit 2026-10-12.
-        return new Server($registry, self::SERVER_NAME, self::SERVER_VERSION, new ResourceProvider($user, $scopes));
+        $server = new Server($registry, self::SERVER_NAME, self::SERVER_VERSION, new ResourceProvider($user, $scopes));
+        $server->setListChanged($this->sseNotifyEnabled());
+
+        return $server;
+    }
+
+    /** Option expérimentale : notification list_changed en SSE (voir dispatch()). */
+    private function sseNotifyEnabled(): bool
+    {
+        if (!(bool) ComponentHelper::getParams('com_sensomcp')->get('list_changed_sse', 0)) {
+            return false;
+        }
+
+        $accept = (string) ($_SERVER['HTTP_ACCEPT'] ?? '');
+        $sse    = stripos($accept, 'text/event-stream') !== false;
+
+        // Option expérimentale : on trace ce que le client accepte, pour savoir si
+        // la voie SSE a pu être prise (diagnostic, journal com_sensomcp.log.php).
+        DebugLog::note('list_changed_sse: client accept="' . $accept . '" ua="' . (string) ($_SERVER['HTTP_USER_AGENT'] ?? '') . '" sse=' . ($sse ? 'yes' : 'no'));
+
+        return $sse;
+    }
+
+    /** Réponse en flux SSE (transport Streamable HTTP) : notification(s) puis la réponse JSON-RPC. */
+    private function respondSse($app, $payload, array ...$notifications): void
+    {
+        while (ob_get_level() > $this->shieldObLevel) {
+            ob_end_clean();
+        }
+
+        restore_error_handler();
+
+        $app->setHeader('Content-Type', 'text/event-stream; charset=utf-8', true);
+        $app->setHeader('Cache-Control', 'no-cache', true);
+        $app->setHeader('X-Accel-Buffering', 'no', true);
+        $app->sendHeaders();
+
+        DebugLog::note('list_changed_sse: SSE response sent with notifications/tools/list_changed');
+
+        $flags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES;
+
+        foreach ($notifications as $n) {
+            echo "event: message\ndata: " . json_encode($n, $flags) . "\n\n";
+        }
+
+        echo "event: message\ndata: " . json_encode($payload, $flags) . "\n\n";
+
+        $app->close();
     }
 
     /**

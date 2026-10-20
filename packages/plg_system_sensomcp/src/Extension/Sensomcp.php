@@ -7,7 +7,9 @@
 namespace Sensomedia\Plugin\System\Sensomcp\Extension;
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Text;
 use Joomla\CMS\Plugin\CMSPlugin;
+use Joomla\Event\Event;
 use Joomla\Event\SubscriberInterface;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\Metadata;
 
@@ -37,7 +39,47 @@ final class Sensomcp extends CMSPlugin implements SubscriberInterface
 
     public static function getSubscribedEvents(): array
     {
-        return ['onAfterInitialise' => 'onAfterInitialise'];
+        return [
+            'onAfterInitialise'      => 'onAfterInitialise',
+            'onExtensionAfterInstall' => 'onExtensionChanged',
+            'onExtensionAfterUpdate'  => 'onExtensionChanged',
+        ];
+    }
+
+    /**
+     * Un plugin d'outils « sensomcp » (ou un package Senso MCP) vient d'être
+     * installé / mis à jour : le catalogue d'outils a probablement changé, les
+     * connexions MCP déjà établies ne le verront qu'après reconnexion → message
+     * à l'administrateur (le tableau de bord liste les connexions concernées).
+     */
+    public function onExtensionChanged(Event $event): void
+    {
+        $app = Factory::getApplication();
+
+        if (!$app->isClient('administrator')) {
+            return;
+        }
+
+        $installer = $event->getArgument('installer');
+        $manifest  = \is_object($installer) && method_exists($installer, 'getManifest') ? $installer->getManifest() : null;
+
+        if (!$manifest instanceof \SimpleXMLElement) {
+            return;
+        }
+
+        $type  = (string) $manifest->attributes()->type;
+        $group = (string) $manifest->attributes()->group;
+        $name  = strtolower((string) ($manifest->packagename ?? $manifest->name ?? ''));
+
+        $isToolPlugin = $type === 'plugin' && $group === 'sensomcp';
+        $isPackage    = $type === 'package' && str_contains($name, 'sensomcp');
+
+        if (!$isToolPlugin && !$isPackage) {
+            return;
+        }
+
+        $this->loadLanguage();
+        $app->enqueueMessage(Text::_('PLG_SYSTEM_SENSOMCP_CATALOG_CHANGED'), 'notice');
     }
 
     public function onAfterInitialise(): void

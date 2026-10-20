@@ -10,6 +10,7 @@ use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\CMS\User\User;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 
 \defined('_JEXEC') or die;
 
@@ -105,11 +106,11 @@ final class ResourceProvider
     public function read(string $uri): array
     {
         if (!preg_match('#^joomla://article/(\d+)$#', $uri, $m)) {
-            throw new \RuntimeException('Unknown resource URI: ' . $uri);
+            throw new McpToolException('Unknown resource URI: ' . $uri);
         }
 
         if (!$this->canRead()) {
-            throw new \RuntimeException('Insufficient scope: content.read is required to read resources.');
+            throw new McpToolException('Insufficient scope: content.read is required to read resources.');
         }
 
         $id = (int) $m[1];
@@ -123,7 +124,7 @@ final class ResourceProvider
         $row = $db->setQuery($q)->loadAssoc();
 
         if (!$row) {
-            throw new \RuntimeException('Article not found, unpublished or not accessible: ' . $id);
+            throw new McpToolException('Article not found, unpublished or not accessible: ' . $id);
         }
 
         $html = trim((string) $row['introtext'] . "\n\n" . (string) $row['fulltext']);

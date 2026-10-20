@@ -6,6 +6,7 @@
 
 namespace Sensomedia\Component\Sensomcp\Api\Mcp;
 
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\DebugLog;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 
@@ -125,20 +126,56 @@ class Server
 
                     return $this->error($id, -32601, 'Méthode inconnue : ' . $method);
             }
-        } catch (\Throwable $e) {
+        } catch (McpToolException $e) {
+            // Refus VOLONTAIRE hors tools/call (ressource inconnue ou hors scope,
+            // prompt inconnu…) : message rédigé pour le client, renvoyé tel quel.
             if ($isNotification) {
                 return null;
             }
 
-            return $this->error($id, -32603, 'Erreur interne : ' . $e->getMessage());
+            return $this->error($id, -32602, $e->getMessage());
+        } catch (\Throwable $e) {
+            // Exception inattendue (PHP, SQL, fichier…) : jamais le message brut au
+            // client (fuite de chemins, de noms de tables, de messages d'API tierces).
+            // Détail dans le journal fichier + résumé dans le journal MCP (base),
+            // tous deux reliés par l'identifiant de corrélation renvoyé au client.
+            $ref = DebugLog::internal($e, 'method=' . $method);
+
+            $this->internalErrors[] = DebugLog::summary($e, $ref);
+
+            if ($isNotification) {
+                return null;
+            }
+
+            return $this->error($id, -32603, 'Internal error (ref ' . $ref . '). Details are in the site MCP log.');
         }
+    }
+
+    /** @var string[] Résumés des exceptions inattendues du dernier handle() (consommés par le contrôleur). */
+    private array $internalErrors = [];
+
+    /** Rend et vide le résumé de la dernière exception inattendue (pour le journal MCP). */
+    public function takeInternalError(): ?string
+    {
+        $last = $this->internalErrors === [] ? null : end($this->internalErrors);
+        $this->internalErrors = [];
+
+        return $last === false ? null : $last;
+    }
+
+    /** Annonce (ou non) la capacité `tools.listChanged` (option expérimentale SSE). */
+    private bool $listChanged = false;
+
+    public function setListChanged(bool $on): void
+    {
+        $this->listChanged = $on;
     }
 
     /** Capacités annoncées (identiques pour `server/discover` et `initialize`). */
     private function serverCapabilities(): array
     {
         return [
-            'tools'     => ['listChanged' => false],
+            'tools'     => ['listChanged' => $this->listChanged],
             'resources' => ['listChanged' => false],
             'prompts'   => ['listChanged' => false],
         ];

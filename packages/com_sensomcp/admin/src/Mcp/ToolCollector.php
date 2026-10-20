@@ -34,6 +34,24 @@ final class ToolCollector
     }
 
     /**
+     * Registre tel que le serveur MCP l'expose à un porteur de jeton : scopes
+     * accordés, mode lecture seule et états par outil. Source unique pour le
+     * dispatch (McpController) ET pour l'empreinte du catalogue (CatalogState),
+     * afin que les deux voient exactement la même liste.
+     *
+     * @param string[] $scopes
+     */
+    public static function collectFor(User $user, array $scopes): ToolRegistry
+    {
+        $registry = self::collect($user);
+        $registry->setGrantedScopes($scopes);
+        $registry->setReadOnly(ToolState::isReadOnly());
+        $registry->setToolPolicy(ToolState::getMap());
+
+        return $registry;
+    }
+
+    /**
      * Catalogue des scopes disponibles (scopeId => libellé traduit), tel que
      * déclaré par les plugins installés. Construit avec un utilisateur invité —
      * la déclaration des scopes ne dépend pas de l'ACL.

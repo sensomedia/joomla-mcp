@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS `#__sensomcp_catalog`;
 DROP TABLE IF EXISTS `#__sensomcp_ratelimit`;
 DROP TABLE IF EXISTS `#__sensomcp_tool_state`;
 DROP TABLE IF EXISTS `#__sensomcp_log`;
