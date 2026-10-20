@@ -9,6 +9,7 @@ namespace Sensomedia\Component\Sensomcp\Api\Controller;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Controller\BaseController;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\DebugLog;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\RateLimiter;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\ClientStore;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\CodeStore;
@@ -94,7 +95,7 @@ class OauthController extends BaseController
         } catch (OAuthException $e) {
             $this->oauthError($e);
         } catch (\Throwable $e) {
-            $this->json(500, ['error' => 'server_error', 'error_description' => $e->getMessage()]);
+            $this->serverError($e, 'oauth.register');
         }
     }
 
@@ -114,7 +115,7 @@ class OauthController extends BaseController
         } catch (OAuthException $e) {
             $this->oauthError($e);
         } catch (\Throwable $e) {
-            $this->json(500, ['error' => 'server_error', 'error_description' => $e->getMessage()]);
+            $this->serverError($e, 'oauth.token');
         }
     }
 
@@ -232,6 +233,18 @@ class OauthController extends BaseController
     }
 
     // ------------------------------------------------------------------ Helpers HTTP
+
+    /**
+     * Exception inattendue sur un endpoint OAuth public : 500 générique avec un
+     * identifiant de corrélation ; le détail (message DB, chemin…) reste dans le
+     * journal com_sensomcp.log.php, jamais dans la réponse d'un appelant anonyme.
+     */
+    private function serverError(\Throwable $e, string $context): void
+    {
+        $ref = DebugLog::internal($e, $context);
+
+        $this->json(500, ['error' => 'server_error', 'error_description' => 'Internal error (ref ' . $ref . ')']);
+    }
 
     private function oauthError(OAuthException $e): void
     {

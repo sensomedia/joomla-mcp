@@ -7,7 +7,6 @@
 namespace Sensomedia\Component\Sensomcp\Administrator\OAuth;
 
 use Joomla\CMS\Uri\Uri;
-use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolCollector;
 
 \defined('_JEXEC') or die;
 
@@ -51,12 +50,27 @@ final class Metadata
         return self::root() . '/api/index.php/v1/mcp/oauth/register';
     }
 
-    /** Scopes disponibles (ids), déclarés par les plugins installés. */
+    /**
+     * Scope « parapluie » : équivaut, à l'autorisation, à l'ensemble des scopes
+     * que l'utilisateur peut réellement utiliser (voir OauthController::authorize).
+     */
+    public const UMBRELLA_SCOPE = 'mcp';
+
+    /**
+     * Scopes annoncés dans les documents de découverte publics (RFC 8414 / 9728).
+     *
+     * Volontairement STATIQUE : seul le scope parapluie est publié. Lister les
+     * scopes réels (`yootheme.write`, `extensions.install`…) revenait à publier,
+     * à tout anonyme, l'inventaire des plugins payants installés, et à instancier
+     * tous les plugins MCP à chaque requête anonyme sur `.well-known`. Le détail
+     * n'est révélé qu'après authentification (écran de consentement, tools/list).
+     * Un client qui demande `scope=mcp` (ou rien) se voit proposer tous les
+     * scopes disponibles ; un client qui demande des scopes précis est servi
+     * comme avant.
+     */
     public static function scopesSupported(): array
     {
-        $scopes = array_keys(ToolCollector::availableScopes());
-
-        return $scopes !== [] ? $scopes : ['mcp'];
+        return [self::UMBRELLA_SCOPE];
     }
 
     /** Métadonnées de ressource protégée (RFC 9728). */

@@ -156,7 +156,9 @@ class McpController extends BaseController
                 $err     = null;
 
                 if (isset($response['error'])) {
-                    $err = (string) ($response['error']['message'] ?? 'error');
+                    // Exception inattendue : le journal MCP garde le détail (classe,
+                    // message, fichier) que le client n'a pas reçu, sous le même ref.
+                    $err = $server->takeInternalError() ?? (string) ($response['error']['message'] ?? 'error');
                 } elseif ($isError) {
                     $err = (string) ($response['result']['content'][0]['text'] ?? 'tool error');
                 }

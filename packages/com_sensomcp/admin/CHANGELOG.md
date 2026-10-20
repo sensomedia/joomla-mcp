@@ -1,5 +1,12 @@
 # Senso MCP — Changelog
 
+## 1.3.3 - 2026-10-20
+### Security
+- Unexpected errors (PHP, database, file system) are no longer returned verbatim to the MCP client or to the public OAuth endpoints. The caller gets a generic message with a reference id; the full detail is written to the site MCP log file (`administrator/logs/com_sensomcp.log.php`) and summarized in the MCP request journal under the same reference.
+- The public OAuth discovery documents (`.well-known`) no longer list the scopes of every installed plugin: they only announce the generic `mcp` scope, which stands for everything the user may use at the consent step. This stops anonymous visitors from reading which paid plugins are installed, and stops the plugins from being loaded on every anonymous discovery request. Clients that request `mcp` (or nothing) are offered all available scopes, as before.
+### Changed
+- All extensions of the package now carry the package version number (the previous package shipped some plugins still labelled 1.3.1).
+
 ## 1.3.2 - 2026-10-17
 ### Security
 - A refresh token presented again after it was already used now revokes the whole connection (new option: grace delay for network retries, 60 s by default); the assistant then asks to authorize again.
