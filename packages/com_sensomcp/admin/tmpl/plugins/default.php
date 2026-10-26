@@ -27,6 +27,15 @@ foreach ($this->catalogPlugins as $p) {
         }
     }
 }
+
+// Empreinte « plugins installés + versions + outils actifs » : l'avertissement
+// masqué par l'utilisateur réapparaît dès qu'elle change (install, MAJ, bascule).
+$reconnectHash = sha1((string) json_encode(array_map(static fn (array $p): array => [
+    $p['element'],
+    $p['installed'] ? $p['installed_version'] : null,
+    $p['enabled'],
+    array_map(static fn (array $t): array => [$t['name'], !empty($t['enabled'])], $p['tools']),
+], $this->catalogPlugins)));
 ?>
 <div class="p-4 sensomcp-ui"<?php echo ($this->theme !== '' ? ' data-smcp-theme="' . $this->escape($this->theme) . '"' : '') . ($this->themeMode !== '' ? ' data-smcp-mode="' . $this->escape($this->themeMode) . '"' : ''); ?>>
     <ul class="nav nav-tabs mb-4">
@@ -54,9 +63,10 @@ foreach ($this->catalogPlugins as $p) {
         <?php endforeach; ?>
     </div>
 
-    <div class="alert alert-info d-flex align-items-center">
-        <span class="icon-info-circle me-2" aria-hidden="true"></span>
-        <div><?php echo Text::_('COM_SENSOMCP_SECURITY_RECONNECT_NOTE'); ?></div>
+    <div class="alert alert-danger d-flex align-items-center" id="smcp-reconnect" data-hash="<?php echo $reconnectHash; ?>">
+        <span class="icon-warning me-2" aria-hidden="true"></span>
+        <div class="flex-grow-1"><?php echo Text::_('COM_SENSOMCP_SECURITY_RECONNECT_NOTE'); ?></div>
+        <button type="button" class="btn-close ms-3" id="smcp-reconnect-hide" aria-label="<?php echo $this->escape(Text::_('COM_SENSOMCP_RECONNECT_HIDE')); ?>" title="<?php echo $this->escape(Text::_('COM_SENSOMCP_RECONNECT_HIDE')); ?>"></button>
     </div>
 
     <div class="d-flex justify-content-between align-items-center mb-2 gap-2 flex-wrap">
@@ -90,6 +100,23 @@ foreach ($this->catalogPlugins as $p) {
     var list = document.getElementById('smcp-list');
     if (!list) { return; }
 
+    // Avertissement de reconnexion : masquable jusqu'au prochain changement de la
+    // liste d'outils (empreinte serveur), réaffiché aussitôt après une action AJAX.
+    var RKEY = 'sensomcp.reconnectHidden';
+    var rAlert = document.getElementById('smcp-reconnect');
+    function showReconnect() {
+        if (!rAlert) { return; }
+        rAlert.classList.remove('d-none');
+        try { localStorage.removeItem(RKEY); } catch (e) {}
+    }
+    if (rAlert) {
+        try { if (localStorage.getItem(RKEY) === rAlert.dataset.hash) { rAlert.classList.add('d-none'); } } catch (e) {}
+        document.getElementById('smcp-reconnect-hide').addEventListener('click', function () {
+            rAlert.classList.add('d-none');
+            try { localStorage.setItem(RKEY, rAlert.dataset.hash); } catch (e) {}
+        });
+    }
+
     function post(task, data) {
         var body = new URLSearchParams(data || {});
         body.set(TOKEN, '1');
@@ -118,7 +145,7 @@ foreach ($this->catalogPlugins as $p) {
         var tmp = document.createElement('div');
         tmp.innerHTML = html.trim();
         var fresh = tmp.firstElementChild;
-        if (fresh) { row.replaceWith(fresh); recountTiles(); }
+        if (fresh) { row.replaceWith(fresh); recountTiles(); showReconnect(); }
     }
 
     function rowOf(el) { return el.closest('.smcp-row'); }
@@ -163,6 +190,7 @@ foreach ($this->catalogPlugins as $p) {
                 el.disabled = false;
                 if (!res || !res.ok) { el.checked = !on; window.alert((res && res.error) || L.error); return; }
                 recountTiles();
+                showReconnect();
             }).catch(function () { el.disabled = false; el.checked = !on; });
         }
     });

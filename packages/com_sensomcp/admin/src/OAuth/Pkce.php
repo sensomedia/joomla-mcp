@@ -20,6 +20,11 @@ final class Pkce
             return false;
         }
 
+        // RFC 7636 §4.1 : 43 à 128 caractères parmi [A-Za-z0-9-._~].
+        if (!preg_match('/^[A-Za-z0-9\-._~]{43,128}$/D', $codeVerifier)) {
+            return false;
+        }
+
         if (strtoupper($method) !== 'S256') {
             return false;
         }

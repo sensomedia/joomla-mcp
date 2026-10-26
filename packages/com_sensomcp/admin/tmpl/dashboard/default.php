@@ -12,7 +12,8 @@ use Sensomedia\Component\Sensomcp\Administrator\Helper\Updates;
 \defined('_JEXEC') or die;
 
 $wa = $this->document->getWebAssetManager();
-$wa->registerAndUseScript('com_sensomcp.chartjs', 'https://cdn.jsdelivr.net/npm/chart.js@4', [], ['defer' => true]);
+// Chart.js 4.4.7 embarqué (media/com_sensomcp/js) : plus de script tiers chargé dans l'administration.
+$wa->registerAndUseScript('com_sensomcp.chartjs', 'com_sensomcp/chart.umd.min.js', ['version' => '4.4.7'], ['defer' => true]);
 
 $s        = $this->stats;
 $settings = Route::_('index.php?option=com_sensomcp&view=settings');

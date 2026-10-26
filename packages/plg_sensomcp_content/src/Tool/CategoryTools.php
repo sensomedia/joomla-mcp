@@ -112,7 +112,8 @@ final class CategoryTools
 
         $registry->register(
             'update_category',
-            'Update an existing com_content category. Only provided fields are changed.',
+            'Update an existing com_content category. Only provided fields are changed. A category moved to '
+            . 'another parent is placed last under it; use reorder_category to change its position.',
             [
                 'type'       => 'object',
                 'properties' => [
@@ -134,6 +135,29 @@ final class CategoryTools
             'content.write',
             ['acl' => static fn (User $me, array $a): bool => (bool) $me->authorise(
                 'core.edit',
+                (int) ($a['id'] ?? 0) > 0 ? 'com_content.category.' . (int) $a['id'] : 'com_content'
+            )]
+        );
+
+        $registry->register(
+            'reorder_category',
+            'Change the position of a com_content category among its siblings (same parent). Provide '
+            . "before_id or after_id (a sibling sharing the category's parent), or position = first / last. "
+            . 'Use update_category (parent_id) first to move it under a different parent.',
+            [
+                'type'       => 'object',
+                'properties' => [
+                    'id'        => ['type' => 'integer', 'description' => 'Category to move.'],
+                    'before_id' => ['type' => 'integer', 'description' => 'Place it just before this sibling category.'],
+                    'after_id'  => ['type' => 'integer', 'description' => 'Place it just after this sibling category.'],
+                    'position'  => ['type' => 'string', 'enum' => ['first', 'last'], 'description' => 'Place it first or last under its parent (instead of before_id / after_id).'],
+                ],
+                'required'   => ['id'],
+            ],
+            fn (array $a) => $this->reorderCategory($a),
+            'content.write',
+            ['acl' => static fn (User $me, array $a): bool => (bool) $me->authorise(
+                'core.edit.state',
                 (int) ($a['id'] ?? 0) > 0 ? 'com_content.category.' . (int) $a['id'] : 'com_content'
             )]
         );
@@ -494,6 +518,79 @@ final class CategoryTools
         }
 
         return ['ok' => true, 'ids' => $deleted, 'deleted' => true];
+    }
+
+    private function reorderCategory(array $a): array
+    {
+        $id = (int) ($a['id'] ?? 0);
+
+        if ($id <= 0) {
+            throw new McpToolException("The 'id' parameter is required.");
+        }
+
+        $before   = isset($a['before_id']) ? (int) $a['before_id'] : 0;
+        $after    = isset($a['after_id']) ? (int) $a['after_id'] : 0;
+        $position = (string) ($a['position'] ?? '');
+        $refId    = $before ?: $after;
+
+        if (!$refId && !\in_array($position, ['first', 'last'], true)) {
+            throw new McpToolException("Provide 'before_id', 'after_id' or 'position' (first / last).");
+        }
+
+        if ($refId === $id) {
+            throw new McpToolException('The reference must be a different category.');
+        }
+
+        // Table nested (lft/rgt) : on déplace par référence pour préserver l'arbre
+        // (la colonne ordering n'est pas utilisée pour les catégories).
+        $table = $this->model()->getTable();
+
+        if (!$table->load($id) || (string) $table->extension !== self::EXTENSION) {
+            throw new McpToolException('Category not found: ' . $id);
+        }
+
+        $parentId = (int) $table->parent_id;
+
+        if ($refId) {
+            $ref = $this->model()->getTable();
+
+            if (!$ref->load($refId) || (string) $ref->extension !== self::EXTENSION) {
+                throw new McpToolException('Reference category not found: ' . $refId);
+            }
+
+            if ((int) $ref->parent_id !== $parentId) {
+                throw new McpToolException(
+                    'The reference must be a sibling (same parent category). '
+                    . 'Use update_category (parent_id) to change the parent.'
+                );
+            }
+
+            $ok = $table->moveByReference($refId, $before ? 'before' : 'after', $id);
+        } else {
+            $ok = $table->moveByReference($parentId, $position === 'first' ? 'first-child' : 'last-child', $id);
+        }
+
+        if (!$ok) {
+            throw new McpToolException('Reorder failed: ' . ($table->getError() ?: 'unknown error'));
+        }
+
+        return ['ok' => true, 'id' => $id, 'parent_id' => $parentId, 'order' => $this->siblingOrder($parentId)];
+    }
+
+    /** Ordre courant (par lft) des catégories directes sous un parent. */
+    private function siblingOrder(int $parentId): array
+    {
+        $db = $this->db();
+        $q  = $db->getQuery(true)
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__categories'))
+            ->where($db->quoteName('extension') . ' = ' . $db->quote(self::EXTENSION))
+            ->where($db->quoteName('parent_id') . ' = :parent')
+            ->where($db->quoteName('published') . ' >= 0')
+            ->order($db->quoteName('lft') . ' ASC')
+            ->bind(':parent', $parentId, ParameterType::INTEGER);
+
+        return array_map('intval', $db->setQuery($q)->loadColumn());
     }
 
     /** Sous-ensemble des ids encore présents en base (extension com_content). */

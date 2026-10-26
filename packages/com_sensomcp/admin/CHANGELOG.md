@@ -1,5 +1,15 @@
 # Senso MCP — Changelog
 
+## 1.4.1 - 2026-10-26
+### Added
+- New `reorder_category` tool: places an article category before or after one of its siblings, or first / last under its parent.
+### Changed
+- The "reconnect your MCP client" notice on the Plugins page is now shown in red and can be hidden; it comes back as soon as the tool list changes (plugin installed, updated, enabled or disabled, tool switched on or off).
+- The dashboard chart library is now shipped with the component instead of being loaded from a CDN.
+### Security
+- Stricter validation of OAuth PKCE code verifiers.
+- `clear_cache` only accepts valid cache group names.
+
 ## 1.4.0 - 2026-10-20
 ### Added
 - Reconnection warning: MCP clients load the tool list once, at connection time, so tools added or changed afterwards (a new plugin, a new parameter, an updated description) stay invisible until the user disconnects then reconnects the connector. The server now remembers the tool list each connection loaded and, when it no longer matches, prepends a notice to the next tool result asking the assistant to tell the user to reconnect (once per hour at most). Connections established before this version are asked to reconnect once, as a catch-up, at their first tool call after the update.

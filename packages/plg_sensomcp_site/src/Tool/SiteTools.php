@@ -425,6 +425,14 @@ final class SiteTools
 
     private function clearCache(string $group): array
     {
+        $group = trim($group);
+
+        // Nom de groupe Joomla (com_content, _system, mod_menu, com_foo.bar) : un
+        // chemin (« ../x ») était « nettoyé » à tort en sortant du dossier de cache.
+        if ($group !== '' && !preg_match('/^[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)*$/D', $group)) {
+            throw new McpToolException('Invalid cache group: ' . $group);
+        }
+
         $groups = $group !== ''
             ? [$group]
             : ['_system', 'com_plugins', 'com_modules', 'com_content', 'com_menus', 'mod_menu', 'page', 'com_templates'];
