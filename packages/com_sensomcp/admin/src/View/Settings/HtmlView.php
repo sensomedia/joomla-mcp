@@ -19,6 +19,7 @@ class HtmlView extends BaseHtmlView
     public string $themeMode = '';
     public string $endpoint   = '';
     public string $server     = '';
+    public string $basePath   = '';
     public array $plugins     = [];
     public array $checks      = [];
     public array $directives  = [];
@@ -30,6 +31,7 @@ class HtmlView extends BaseHtmlView
         $model            = $this->getModel();
         $this->endpoint   = $model->getEndpoint();
         $this->server     = $model->getServer();
+        $this->basePath   = $model->basePath();
         $this->plugins    = $model->getPluginStatus();
         $this->checks     = $model->getChecks();
         $this->directives = $model->getDirectives();

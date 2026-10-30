@@ -9,6 +9,7 @@ namespace Sensomedia\Plugin\System\Sensomcp\Extension;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Plugin\CMSPlugin;
+use Joomla\CMS\Uri\Uri;
 use Joomla\Event\Event;
 use Joomla\Event\SubscriberInterface;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\Metadata;
@@ -93,7 +94,7 @@ final class Sensomcp extends CMSPlugin implements SubscriberInterface
 
         $path   = rawurldecode((string) parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH));
         $path   = '/' . trim($path, '/');
-        $method = self::ROUTES[$path] ?? null;
+        $method = $this->routeFor($path, rtrim(Uri::root(true), '/'));
 
         if ($method === null) {
             return;
@@ -114,5 +115,38 @@ final class Sensomcp extends CMSPlugin implements SubscriberInterface
         echo $payload;
 
         $app->close();
+    }
+
+    /**
+     * Méthode Metadata servant ce chemin, ou null.
+     *
+     * Site en sous-dossier (base « /dev ») : deux formes sont reconnues.
+     *  - « /dev/.well-known/oauth-… » : URL annoncée dans le 401 (resource_metadata),
+     *    relative à la racine du site ;
+     *  - « /.well-known/oauth-…/dev[/…] » : forme « insérée » des RFC 8414 / 9728 que
+     *    les clients interrogent à la racine du DOMAINE. Elle n'arrive ici que si la
+     *    racine du domaine la réécrit vers /dev/index.php (règle affichée au tableau de bord).
+     */
+    private function routeFor(string $path, string $base): ?string
+    {
+        if ($base === '') {
+            return self::ROUTES[$path] ?? null;
+        }
+
+        if (str_starts_with($path, $base . '/')) {
+            $method = self::ROUTES[substr($path, \strlen($base))] ?? null;
+
+            if ($method !== null) {
+                return $method;
+            }
+        }
+
+        foreach (self::ROUTES as $route => $method) {
+            if ($path === $route . $base || str_starts_with($path, $route . $base . '/')) {
+                return $method;
+            }
+        }
+
+        return null;
     }
 }

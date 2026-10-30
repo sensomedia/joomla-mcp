@@ -1,5 +1,14 @@
 # Senso MCP — Changelog
 
+## 1.4.3 - 2026-10-30
+### Fixed
+- OAuth sign-in (claude.ai) now works when Joomla is installed in a subfolder (e.g. `https://example.com/site/`). The OAuth metadata was not found there, so the connector stopped at "Looking up sign-in settings".
+### Changed
+- Settings view, sites in a subfolder: new check for the OAuth metadata at the root of the domain, with the rule to add there when it fails. The suggested rules now include the subfolder.
+- Settings view, server directives: each one now says which file to edit (full path) and where to put the lines. The nginx instructions no longer assume a hosting panel; the Plesk-specific variant is shown separately.
+- New "Add to .htaccess automatically" button: the lines are added at the top of the file, between Senso MCP markers, after a backup copy. The change is undone by itself if the site stops answering or the check stays red. A "Remove" button takes the block out again. At the root of the domain, the rest of the file (which may belong to another application) is kept as is.
+- LiteSpeed servers are detected and get the `.htaccess` rules instead of nginx ones.
+
 ## 1.4.2 - 2026-10-29
 ### Fixed
 - Dashboard, License section: with an add-on license only (e.g. YOOtheme Pro connector), the site no longer shows "This domain is not declared for your license". Add-on licenses are not tied to domains; the dashboard now says so.
