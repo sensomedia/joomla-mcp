@@ -274,6 +274,7 @@ foreach ($this->perDay as $day => $count) {
         notCovered: <?php echo json_encode(Text::_('COM_SENSOMCP_LICENSE_NOT_COVERED')); ?>,
         expiredCover: <?php echo json_encode(Text::_('COM_SENSOMCP_LICENSE_EXPIRED_COVER')); ?>,
         noSeats: <?php echo json_encode(Text::_('COM_SENSOMCP_LICENSE_NO_SEATS')); ?>,
+        addonOnly: <?php echo json_encode(Text::_('COM_SENSOMCP_LICENSE_ADDON_ONLY')); ?>,
         activate: <?php echo json_encode(Text::_('COM_SENSOMCP_LICENSE_ACTIVATE')); ?>,
         choose: <?php echo json_encode(Text::_('COM_SENSOMCP_LICENSE_CHOOSE')); ?>,
         seatsLeft: <?php echo json_encode(Text::_('COM_SENSOMCP_LICENSE_SEATS_LEFT')); ?>,
@@ -343,6 +344,13 @@ foreach ($this->perDay as $day => $count) {
         var host = st.host || '';
         if (st.action === 'none' && st.effective_tier !== 'free') {
             statusEl.innerHTML = '<span class="text-success">✓ ' + host + ' — ' + L.covered + ' (' + st.effective_tier + ')</span>';
+            return;
+        }
+
+        // Licence(s) add-on seule(s), sans licence cœur à siège : rien à déclarer, les add-ons
+        // s'installent et se mettent à jour sur tout domaine tant que leur licence est active.
+        if ((st.addons || []).length && st.action === 'no_seats' && !st.resolved) {
+            statusEl.innerHTML = '<span class="text-success">✓ ' + host + ' — ' + L.addonOnly + '</span>';
             return;
         }
 

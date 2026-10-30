@@ -1,5 +1,9 @@
 # Senso MCP — Changelog
 
+## 1.4.2 - 2026-10-29
+### Fixed
+- Dashboard, License section: with an add-on license only (e.g. YOOtheme Pro connector), the site no longer shows "This domain is not declared for your license". Add-on licenses are not tied to domains; the dashboard now says so.
+
 ## 1.4.1 - 2026-10-26
 ### Added
 - New `reorder_category` tool: places an article category before or after one of its siblings, or first / last under its parent.
