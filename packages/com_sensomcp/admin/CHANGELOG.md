@@ -1,5 +1,9 @@
 # Senso MCP — Changelog
 
+## 1.4.4 - 2026-11-04
+### Changed
+- Error log: when an error comes from inside Joomla or a library, the log entry now also names the extension code that triggered it, to find the cause faster.
+
 ## 1.4.3 - 2026-10-30
 ### Fixed
 - OAuth sign-in (claude.ai) now works when Joomla is installed in a subfolder (e.g. `https://example.com/site/`). The OAuth metadata was not found there, so the connector stopped at "Looking up sign-in settings".

@@ -102,11 +102,11 @@ final class DebugLog
         try {
             self::ensureLogger();
 
-            $file = str_replace(JPATH_ROOT . '/', '', $e->getFile());
+            $file = self::relPath($e->getFile());
 
             Log::add(
                 'tool=' . $tool . ' error=' . $e::class . ': ' . substr($e->getMessage(), 0, self::MAX_LEN)
-                . ' at ' . $file . ':' . $e->getLine(),
+                . ' at ' . $file . ':' . $e->getLine() . self::callers($e),
                 Log::ERROR,
                 'com_sensomcp'
             );
@@ -132,7 +132,7 @@ final class DebugLog
             Log::add(
                 'ref=' . $ref . ($context !== '' ? ' ' . $context : '')
                 . ' error=' . $e::class . ': ' . substr($e->getMessage(), 0, self::MAX_LEN)
-                . ' at ' . str_replace(JPATH_ROOT . '/', '', $e->getFile()) . ':' . $e->getLine(),
+                . ' at ' . self::relPath($e->getFile()) . ':' . $e->getLine() . self::callers($e),
                 Log::ERROR,
                 'com_sensomcp'
             );
@@ -157,8 +157,86 @@ final class DebugLog
     /** Résumé court d'une exception pour le journal MCP en base (colonne error, 255 car.). */
     public static function summary(\Throwable $e, string $ref): string
     {
-        return 'ref=' . $ref . ' ' . $e::class . ': ' . substr($e->getMessage(), 0, 160)
+        $summary = 'ref=' . $ref . ' ' . $e::class . ': ' . substr($e->getMessage(), 0, 160)
             . ' @ ' . basename($e->getFile()) . ':' . $e->getLine();
+
+        // Levée dans une librairie vendor : le premier appelant hors vendor
+        // désigne le vrai responsable (souvent un plugin tiers).
+        if (self::isVendor($e->getFile())) {
+            $frames = self::callerFrames($e, 1);
+
+            if ($frames !== []) {
+                $summary .= ' via ' . basename($frames[0]['file']) . ':' . $frames[0]['line'];
+            }
+        }
+
+        return $summary;
+    }
+
+    /** Nombre max d'appelants listés dans le journal fichier. */
+    private const MAX_CALLERS = 6;
+
+    /**
+     * Chaîne d'appelants hors `libraries/vendor/` (du plus proche au plus
+     * lointain) : quand l'exception est levée par la couche base de données ou
+     * un autre paquet vendor, c'est elle qui montre quelle extension l'a
+     * déclenchée. Fichiers et lignes seulement, jamais les arguments.
+     */
+    private static function callers(\Throwable $e): string
+    {
+        $frames = self::callerFrames($e, self::MAX_CALLERS);
+
+        if ($frames === []) {
+            return '';
+        }
+
+        $parts = array_map(
+            static fn (array $f): string => self::relPath($f['file']) . ':' . $f['line']
+                . ($f['function'] !== '' ? ' (' . $f['function'] . ')' : ''),
+            $frames
+        );
+
+        return ' | callers: ' . implode(' < ', $parts);
+    }
+
+    /**
+     * @return list<array{file:string, line:int, function:string}>
+     */
+    private static function callerFrames(\Throwable $e, int $max): array
+    {
+        $out = [];
+
+        foreach ($e->getTrace() as $frame) {
+            $file = (string) ($frame['file'] ?? '');
+
+            if ($file === '' || self::isVendor($file)) {
+                continue;
+            }
+
+            $out[] = [
+                'file'     => $file,
+                'line'     => (int) ($frame['line'] ?? 0),
+                'function' => isset($frame['class'])
+                    ? $frame['class'] . ($frame['type'] ?? '::') . ($frame['function'] ?? '')
+                    : (string) ($frame['function'] ?? ''),
+            ];
+
+            if (\count($out) >= $max) {
+                break;
+            }
+        }
+
+        return $out;
+    }
+
+    private static function isVendor(string $file): bool
+    {
+        return str_contains(str_replace('\\', '/', $file), '/libraries/vendor/');
+    }
+
+    private static function relPath(string $file): string
+    {
+        return \defined('JPATH_ROOT') ? str_replace(JPATH_ROOT . '/', '', $file) : $file;
     }
 
     private static function ensureLogger(): void
