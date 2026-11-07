@@ -29,6 +29,143 @@ class SettingsController extends BaseController
         $this->run('removeHtaccess');
     }
 
+    /** Carte Connexion OAuth : .htaccess d'abord, découverte sous /api/ sinon. */
+    public function oauthRepair(): void
+    {
+        $model = $this->guard();
+
+        if ($model === null) {
+            return;
+        }
+
+        $res  = $model->repairOauth();
+        $back = 'index.php?option=com_sensomcp&view=settings';
+
+        switch ($res['status']) {
+            case 'htaccess':
+                $this->app->enqueueMessage(Text::sprintf('COM_SENSOMCP_OAUTH_REPAIRED_HTACCESS', (string) $res['file']), 'message');
+
+                if (!empty($res['backup'])) {
+                    $this->app->enqueueMessage(Text::sprintf('COM_SENSOMCP_HTACCESS_BACKUP', $res['backup']), 'message');
+                }
+                break;
+
+            case 'fallback':
+                $this->app->enqueueMessage(Text::_('COM_SENSOMCP_OAUTH_REPAIRED_FALLBACK'), 'message');
+                break;
+
+            case 'failed':
+                $this->app->enqueueMessage(Text::_('COM_SENSOMCP_OAUTH_REPAIR_FAILED'), 'error');
+                $back .= '&oauth_manual=1';
+                break;
+
+            default:
+                $this->app->enqueueMessage(Text::_('COM_SENSOMCP_SERVER_OK'), 'message');
+        }
+
+        $this->setRedirect(Route::_($back, false));
+    }
+
+    public function oauthFallbackOn(): void
+    {
+        $model = $this->guard();
+
+        if ($model === null) {
+            return;
+        }
+
+        $ok = $model->enableDiscoveryFallback();
+
+        $this->setRedirect(
+            Route::_('index.php?option=com_sensomcp&view=settings' . ($ok ? '' : '&oauth_manual=1'), false),
+            Text::_($ok ? 'COM_SENSOMCP_OAUTH_FALLBACK_ENABLED' : 'COM_SENSOMCP_OAUTH_FALLBACK_NOEFFECT'),
+            $ok ? 'message' : 'error'
+        );
+    }
+
+    public function oauthFallbackOff(): void
+    {
+        $model = $this->guard();
+
+        if ($model === null) {
+            return;
+        }
+
+        $model->disableDiscoveryFallback();
+
+        $this->setRedirect(
+            Route::_('index.php?option=com_sensomcp&view=settings', false),
+            Text::_('COM_SENSOMCP_OAUTH_FALLBACK_DISABLED'),
+            'message'
+        );
+    }
+
+    /** Active un plugin requis (`plugin` = folder.element) ou tous (`plugin` vide). */
+    public function pluginsEnable(): void
+    {
+        $model = $this->guard('core.edit.state');
+
+        if ($model === null) {
+            return;
+        }
+
+        $count = $model->enableRequiredPlugins($this->app->input->getString('plugin', ''));
+
+        $this->setRedirect(
+            Route::_('index.php?option=com_sensomcp&view=settings', false),
+            Text::plural('COM_SENSOMCP_PLUGINS_ENABLED_N', $count),
+            $count > 0 ? 'message' : 'warning'
+        );
+    }
+
+    public function tokenGroupAdd(): void
+    {
+        $this->tokenGroup('add');
+    }
+
+    public function tokenGroupRemove(): void
+    {
+        $this->tokenGroup('remove');
+    }
+
+    private function tokenGroup(string $action): void
+    {
+        $model = $this->guard('core.edit');
+
+        if ($model === null) {
+            return;
+        }
+
+        $res = $model->changeTokenGroup($action, $this->app->input->getInt('group_id', 0));
+
+        [$key, $type] = match ($res) {
+            'ok'    => [$action === 'add' ? 'COM_SENSOMCP_TOKEN_GROUP_ADDED' : 'COM_SENSOMCP_TOKEN_GROUP_REMOVED', 'message'],
+            'last'  => ['COM_SENSOMCP_TOKEN_GROUP_LAST', 'warning'],
+            default => ['COM_SENSOMCP_TOKEN_GROUP_INVALID', 'error'],
+        };
+
+        $this->setRedirect(Route::_('index.php?option=com_sensomcp&view=settings', false), Text::_($key), $type);
+    }
+
+    /**
+     * Jeton CSRF + core.admin sur Senso MCP (+ $pluginsAction sur com_plugins quand
+     * l'action modifie un autre plugin) ; renvoie le modèle, ou null après redirection.
+     */
+    private function guard(string $pluginsAction = ''): ?\Sensomedia\Component\Sensomcp\Administrator\Model\SettingsModel
+    {
+        $this->checkToken();
+
+        $user = $this->app->getIdentity();
+
+        if (!$user->authorise('core.admin', 'com_sensomcp') || ($pluginsAction !== '' && !$user->authorise($pluginsAction, 'com_plugins'))) {
+            $this->setRedirect(Route::_('index.php?option=com_sensomcp&view=settings', false), Text::_('JERROR_ALERTNOAUTHOR'), 'error');
+
+            return null;
+        }
+
+        return $this->getModel('Settings');
+    }
+
     private function run(string $method): void
     {
         $this->checkToken();

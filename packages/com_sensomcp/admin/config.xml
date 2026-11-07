@@ -84,6 +84,23 @@
             default="50"
             min="0" />
 
+        <!--
+            Hébergeurs dont le serveur frontal répond lui-même à /.well-known/*
+            (SiteGround…) : l'issuer OAuth devient le préfixe OAuth de l'API, les
+            clients trouvent alors les métadonnées sous /api/. Désactivé par défaut
+            pour ne rien changer aux sites dont /.well-known/ fonctionne.
+        -->
+        <field
+            name="oauth_discovery_fallback"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_SENSOMCP_OAUTH_DISCOVERY_FALLBACK_LABEL"
+            description="COM_SENSOMCP_OAUTH_DISCOVERY_FALLBACK_DESC"
+            default="0">
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+
         <field
             name="debug"
             type="radio"

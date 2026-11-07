@@ -53,6 +53,12 @@ final class Sensomcp extends CMSPlugin implements SubscriberInterface
         $router->addRoute(new Route(['POST'], 'v1/mcp/oauth/token', 'oauth.token', [], $defaults));
         $router->addRoute(new Route(['GET'], 'v1/mcp/oauth/protected-resource', 'oauth.metaResource', [], $defaults));
         $router->addRoute(new Route(['GET'], 'v1/mcp/oauth/authorization-server', 'oauth.metaAuthServer', [], $defaults));
+
+        // Découverte quand l'issuer est le préfixe OAuth de l'API (option « hébergeur
+        // qui intercepte /.well-known/ ») : repli MCP `{issuer}/.well-known/openid-configuration`,
+        // plus la forme ajoutée en suffixe qu'utilisent certains clients pour RFC 8414.
+        $router->addRoute(new Route(['GET'], 'v1/mcp/oauth/.well-known/openid-configuration', 'oauth.metaAuthServer', [], $defaults));
+        $router->addRoute(new Route(['GET'], 'v1/mcp/oauth/.well-known/oauth-authorization-server', 'oauth.metaAuthServer', [], $defaults));
         $router->addRoute(new Route(['GET'], 'v1/mcp/oauth/authcheck', 'oauth.authcheck', [], $defaults));
     }
 

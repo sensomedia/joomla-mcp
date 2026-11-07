@@ -1,5 +1,17 @@
 # Senso MCP — Changelog
 
+## 1.4.5 - 2026-11-07
+### Added
+- New option "OAuth discovery without /.well-known/" (Options → Security), for hosts whose server answers the `/.well-known/` addresses itself (for example SiteGround). OAuth clients (ChatGPT, claude.ai) then find the sign-in settings under `/api/`, so no server rule is needed. Off by default.
+- Settings page, new "OAuth sign-in" card: when the `/.well-known/` addresses do not answer, a "Repair automatically" button tries the `.htaccess` rule first, then the discovery under `/api/`, checks each step and keeps nothing that does not work. The manual fixes and a message ready to send to your host's support stay available below.
+- Settings page, required plugins: a disabled plugin can be enabled from the page ("Enable", or "Enable all").
+- Settings page, "User - Joomla API Token": shows the user groups allowed to use a Joomla API token, and lets you add or remove groups.
+### Changed
+- The 401 answer of the MCP server now points to the OAuth metadata under `/api/`, which every host can serve.
+- Joomla API tokens are accepted only for the user groups allowed in the "User - Joomla API Token" plugin, as in the Joomla API.
+### Fixed
+- German, Spanish, Italian, Dutch and Portuguese: the "Connections with an outdated tool list" panel and the experimental list_changed option are now translated.
+
 ## 1.4.4 - 2026-11-04
 ### Changed
 - Error log: when an error comes from inside Joomla or a library, the log entry now also names the extension code that triggered it, to find the cause faster.

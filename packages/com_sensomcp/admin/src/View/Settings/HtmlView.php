@@ -25,10 +25,16 @@ class HtmlView extends BaseHtmlView
     public array $directives  = [];
     public string $configJson = '';
     public array $tools       = [];
+    public string $hostRequest = '';
+    public bool $oauthManual   = false;
+    public array $tokenGroups  = [];
 
     public function display($tpl = null)
     {
-        $model            = $this->getModel();
+        $model             = $this->getModel();
+        $this->hostRequest = $model->getHostRequest();
+        $this->tokenGroups = $model->getTokenGroups();
+        $this->oauthManual = Factory::getApplication()->input->getInt('oauth_manual', 0) === 1;
         $this->endpoint   = $model->getEndpoint();
         $this->server     = $model->getServer();
         $this->basePath   = $model->basePath();

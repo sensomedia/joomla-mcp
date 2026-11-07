@@ -6,6 +6,7 @@
 
 namespace Sensomedia\Component\Sensomcp\Administrator\OAuth;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Uri\Uri;
 
 \defined('_JEXEC') or die;
@@ -17,16 +18,44 @@ use Joomla\CMS\Uri\Uri;
  */
 final class Metadata
 {
+    /** Préfixe des endpoints OAuth de l'API app (routes de plg_webservices_sensomcp). */
+    public const OAUTH_PATH = '/api/index.php/v1/mcp/oauth';
+
     /** Racine du site sans slash final, ex. https://dev.sensomedia.com */
     public static function root(): string
     {
         return rtrim(Uri::root(), '/');
     }
 
-    /** Émetteur (issuer) OAuth = racine du site. */
+    /**
+     * Option « découverte OAuth sans /.well-known/ à la racine » : pour les
+     * hébergeurs dont le serveur frontal répond lui-même à /.well-known/*
+     * (ex. SiteGround : 404 nginx, la requête n'atteint jamais PHP).
+     */
+    public static function discoveryFallback(): bool
+    {
+        return (bool) ComponentHelper::getParams('com_sensomcp')->get('oauth_discovery_fallback', 0);
+    }
+
+    /**
+     * Émetteur (issuer) OAuth : la racine du site, ou, avec l'option de repli,
+     * le préfixe OAuth de l'API. Un issuer avec chemin permet au client de
+     * trouver les métadonnées du serveur d'autorisation sous /api/ (repli
+     * `{issuer}/.well-known/openid-configuration` de la découverte MCP), sans
+     * passer par /.well-known/ à la racine du domaine.
+     */
     public static function issuer(): string
     {
-        return self::root();
+        return self::discoveryFallback() ? self::root() . self::OAUTH_PATH : self::root();
+    }
+
+    /**
+     * URL annoncée dans le WWW-Authenticate du 401 (RFC 9728 §5.1 : n'importe
+     * quelle URL). Servie par l'API app → joignable sans réécriture serveur.
+     */
+    public static function protectedResourceUrl(): string
+    {
+        return self::root() . self::OAUTH_PATH . '/protected-resource';
     }
 
     /** URI canonique du serveur MCP (= audience des access tokens). */
@@ -42,12 +71,12 @@ final class Metadata
 
     public static function tokenEndpoint(): string
     {
-        return self::root() . '/api/index.php/v1/mcp/oauth/token';
+        return self::root() . self::OAUTH_PATH . '/token';
     }
 
     public static function registrationEndpoint(): string
     {
-        return self::root() . '/api/index.php/v1/mcp/oauth/register';
+        return self::root() . self::OAUTH_PATH . '/register';
     }
 
     /**

@@ -46,7 +46,9 @@ final class TokenService
         $now = time();
 
         $payload = [
-            'iss'       => rtrim(\Joomla\CMS\Uri\Uri::root(), '/'),
+            // Même valeur que l'issuer annoncé (non vérifié à la lecture : seule
+            // l'audience l'est, l'option de repli ne casse donc pas les jetons émis).
+            'iss'       => Metadata::issuer(),
             'sub'       => (string) $userId,
             'aud'       => $audience,
             'client_id' => $clientId,

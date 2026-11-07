@@ -8,10 +8,13 @@ namespace Sensomedia\Component\Sensomcp\Administrator\Model;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Http\HttpFactory;
+use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\UserFactoryInterface;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\ComponentParams;
 use Sensomedia\Component\Sensomcp\Administrator\Helper\Htaccess;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\TokenGroups;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolCollector;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\Metadata;
 
@@ -51,15 +54,122 @@ class SettingsModel extends BaseDatabaseModel
         return 'unknown';
     }
 
+    /** Plugins requis : [folder, element, libellé]. */
+    private const REQUIRED_PLUGINS = [
+        ['folder' => 'webservices',        'element' => 'sensomcp', 'label' => 'Web Services - Senso MCP'],
+        ['folder' => 'system',             'element' => 'sensomcp', 'label' => 'System - Senso MCP'],
+        ['folder' => 'api-authentication', 'element' => 'token',    'label' => 'API Authentication - Web Services Joomla Token'],
+        ['folder' => 'user',               'element' => 'token',    'label' => 'User - Joomla API Token'],
+    ];
+
+    /**
+     * Active les plugins requis installés mais désactivés ($key = « folder.element »,
+     * vide = tous). @return int nombre de plugins activés
+     */
+    public function enableRequiredPlugins(string $key = ''): int
+    {
+        $db    = $this->getDatabase();
+        $count = 0;
+
+        foreach (self::REQUIRED_PLUGINS as $p) {
+            if ($key !== '' && $key !== $p['folder'] . '.' . $p['element']) {
+                continue;
+            }
+
+            $q = $db->getQuery(true)
+                ->update($db->quoteName('#__extensions'))
+                ->set($db->quoteName('enabled') . ' = 1')
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = :folder')
+                ->where($db->quoteName('element') . ' = :element')
+                ->where($db->quoteName('enabled') . ' = 0')
+                ->bind(':folder', $p['folder'])
+                ->bind(':element', $p['element']);
+
+            $db->setQuery($q)->execute();
+            $count += (int) $db->getAffectedRows();
+        }
+
+        foreach (['com_plugins', '_system'] as $group) {
+            try {
+                Factory::getCache($group)->clean();
+            } catch (\Throwable) {
+                // best-effort
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * Groupes autorisés à créer / utiliser un jeton API Joomla (plg_user_token).
+     *
+     * @return array{all:bool, selected:list<array{id:int,title:string}>, available:list<array{id:int,title:string,level:int}>}
+     */
+    public function getTokenGroups(): array
+    {
+        $db   = $this->getDatabase();
+        $q    = $db->getQuery(true)
+            ->select('a.' . $db->quoteName('id') . ', a.' . $db->quoteName('title') . ', COUNT(DISTINCT b.' . $db->quoteName('id') . ') AS ' . $db->quoteName('level'))
+            ->from($db->quoteName('#__usergroups', 'a'))
+            ->join('LEFT', $db->quoteName('#__usergroups', 'b'), 'a.' . $db->quoteName('lft') . ' > b.' . $db->quoteName('lft') . ' AND a.' . $db->quoteName('rgt') . ' < b.' . $db->quoteName('rgt'))
+            ->group('a.' . $db->quoteName('id') . ', a.' . $db->quoteName('title') . ', a.' . $db->quoteName('lft'))
+            ->order('a.' . $db->quoteName('lft'));
+
+        $rows    = $db->setQuery($q)->loadAssocList();
+        $allowed = TokenGroups::allowed();
+        $sel     = [];
+        $avail   = [];
+
+        foreach ($rows as $r) {
+            $g = ['id' => (int) $r['id'], 'title' => (string) $r['title'], 'level' => (int) $r['level']];
+
+            if (\in_array($g['id'], $allowed, true)) {
+                $sel[] = $g;
+            } else {
+                $avail[] = $g;
+            }
+        }
+
+        return ['all' => $allowed === [], 'selected' => $sel, 'available' => $avail];
+    }
+
+    /** @return string ok | last (refus de retirer le dernier groupe) | invalid */
+    public function changeTokenGroup(string $action, int $groupId): string
+    {
+        $db     = $this->getDatabase();
+        $exists = (int) $db->setQuery(
+            $db->getQuery(true)->select('COUNT(*)')->from($db->quoteName('#__usergroups'))
+                ->where($db->quoteName('id') . ' = :id')->bind(':id', $groupId, \Joomla\Database\ParameterType::INTEGER)
+        )->loadResult();
+
+        if ($exists === 0) {
+            return 'invalid';
+        }
+
+        $groups = TokenGroups::allowed();
+
+        if ($action === 'add') {
+            // Liste vide = tous les groupes : ajouter un groupe revient à restreindre à celui-ci.
+            $groups[] = $groupId;
+        } else {
+            $groups = array_values(array_diff($groups, [$groupId]));
+
+            // Une liste vide ouvrirait les jetons à TOUS les groupes (règle Joomla) : refus.
+            if ($groups === []) {
+                return 'last';
+            }
+        }
+
+        TokenGroups::set($groups);
+
+        return 'ok';
+    }
+
     /** Statut des plugins requis. */
     public function getPluginStatus(): array
     {
-        $required = [
-            ['folder' => 'webservices',        'element' => 'sensomcp', 'label' => 'Web Services - Senso MCP'],
-            ['folder' => 'system',             'element' => 'sensomcp', 'label' => 'System - Senso MCP'],
-            ['folder' => 'api-authentication', 'element' => 'token',    'label' => 'API Authentication - Web Services Joomla Token'],
-            ['folder' => 'user',               'element' => 'token',    'label' => 'User - Joomla API Token'],
-        ];
+        $required = self::REQUIRED_PLUGINS;
 
         $db  = $this->getDatabase();
         $out = [];
@@ -77,6 +187,7 @@ class SettingsModel extends BaseDatabaseModel
             $enabled = $db->setQuery($query)->loadResult();
 
             $out[] = [
+                'key'       => $p['folder'] . '.' . $p['element'],
                 'label'     => $p['label'],
                 'installed' => $enabled !== null,
                 'enabled'   => (int) $enabled === 1,
@@ -109,6 +220,12 @@ class SettingsModel extends BaseDatabaseModel
         // d'autorisation à la racine du DOMAINE (RFC 8414, « /.well-known/…/dev »).
         if ($base !== '') {
             $checks['wellknown_domain'] = $this->probeJson($this->origin() . '/.well-known/oauth-authorization-server' . $base, 'issuer');
+        }
+
+        // Option de repli : la découverte passe par l'issuer sous /api/, plus par
+        // /.well-known/ à la racine (dont les règles deviennent alors inutiles).
+        if (Metadata::discoveryFallback()) {
+            $checks['wellknown_fallback'] = $this->probeJson(Metadata::issuer() . '/.well-known/openid-configuration', 'issuer');
         }
 
         return $this->checks = $checks;
@@ -193,6 +310,11 @@ class SettingsModel extends BaseDatabaseModel
                 $this->directive('auth', 'all', 'COM_SENSOMCP_DIR_AUTH', $this->nginxAuth(), $base),
                 ['nginxWhere' => 'COM_SENSOMCP_DIR_NGINX_WHERE_AUTH', 'nginxPlesk' => $this->nginxAuthPlesk($host, $base)]
             );
+        }
+
+        // Option de repli active et opérationnelle : les règles /.well-known ne servent plus.
+        if (!empty($checks['wellknown_fallback'])) {
+            return $out;
         }
 
         // Rewrite /.well-known — requis SEULEMENT pour OAuth (claude.ai, Claude Desktop).
@@ -284,6 +406,114 @@ class SettingsModel extends BaseDatabaseModel
         }
 
         return Htaccess::remove($id, $this->basePath());
+    }
+
+    /**
+     * Bouton « Réparer automatiquement » de la carte Connexion OAuth.
+     *
+     * 1. Solution standard : bloc(s) .htaccess pour /.well-known/ (chacun vérifié
+     *    et annulé s'il casse le site ou reste sans effet, voir applyHtaccess).
+     * 2. Sinon (ex. SiteGround : nginx répond à /.well-known/ avant Apache) : les
+     *    blocs ajoutés par ce passage sont retirés et la découverte sous /api/ est
+     *    activée, puis vérifiée (remise à 0 si elle ne répond pas).
+     *
+     * @return array{status:string, file:?string, backup:?string}  status : ok (rien à
+     *         faire) | htaccess | fallback | failed
+     */
+    public function repairOauth(): array
+    {
+        $checks = $this->getChecks(true);
+        $needed = [];
+
+        if (empty($checks['wellknown'])) {
+            $needed[] = 'wellknown';
+        }
+
+        if ($this->basePath() !== '' && empty($checks['wellknown_domain'])) {
+            $needed[] = 'wellknown_domain';
+        }
+
+        if ($needed === [] || !empty($checks['wellknown_fallback'])) {
+            return ['status' => 'ok', 'file' => null, 'backup' => null];
+        }
+
+        $added  = [];
+        $file   = null;
+        $backup = null;
+
+        foreach ($needed as $id) {
+            $res = $this->applyHtaccess($id);
+
+            if ($res['status'] === 'ok') {
+                $added[] = $id;
+                $file  ??= $res['file'];
+                $backup ??= $res['backup'];
+            }
+        }
+
+        if (\count($added) === \count($needed)) {
+            return ['status' => 'htaccess', 'file' => $file, 'backup' => $backup];
+        }
+
+        // Solution standard incomplète : on ne laisse pas de demi-réglage derrière.
+        foreach ($added as $id) {
+            $this->removeHtaccess($id);
+        }
+
+        return ['status' => $this->enableDiscoveryFallback() ? 'fallback' : 'failed', 'file' => null, 'backup' => null];
+    }
+
+    /**
+     * Active la découverte OAuth sous /api/ et vérifie qu'elle répond. La sonde
+     * exige l'issuer à chemin : c'est la preuve que la requête (processus distinct)
+     * lit bien le nouveau réglage. Remise à 0 sinon.
+     */
+    public function enableDiscoveryFallback(): bool
+    {
+        ComponentParams::set(['oauth_discovery_fallback' => 1]);
+
+        $issuer = Metadata::root() . Metadata::OAUTH_PATH;
+        $ok     = $this->probeIssuer($issuer . '/.well-known/openid-configuration') === $issuer;
+
+        if (!$ok) {
+            ComponentParams::set(['oauth_discovery_fallback' => 0]);
+        }
+
+        $this->checks = null;
+
+        return $ok;
+    }
+
+    public function disableDiscoveryFallback(): void
+    {
+        ComponentParams::set(['oauth_discovery_fallback' => 0]);
+        $this->checks = null;
+    }
+
+    /** Valeur « issuer » d'un document de métadonnées, null si injoignable. */
+    private function probeIssuer(string $url): ?string
+    {
+        try {
+            $response = $this->http()->get($url, [], 8);
+
+            if ((int) $response->code !== 200) {
+                return null;
+            }
+
+            $data = json_decode((string) $response->body, true);
+
+            return \is_array($data) && \is_string($data['issuer'] ?? null) ? $data['issuer'] : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** Texte prêt à transmettre au support de l'hébergeur quand rien ne marche. */
+    public function getHostRequest(): string
+    {
+        $base = $this->basePath();
+
+        return Text::sprintf('COM_SENSOMCP_OAUTH_HOST_REQUEST_TEXT', $this->origin() . $base, $base);
     }
 
     /** Cas général : une ligne dans le bloc location qui transmet PHP à PHP-FPM. */

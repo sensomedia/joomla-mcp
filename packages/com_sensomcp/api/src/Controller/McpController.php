@@ -283,7 +283,9 @@ class McpController extends BaseController
      */
     private function unauthorized($app): void
     {
-        $metaUrl = Metadata::root() . '/.well-known/oauth-protected-resource';
+        // Servie par l'API app : joignable même quand l'hébergeur intercepte
+        // /.well-known/ à la racine (SiteGround), sans réécriture serveur.
+        $metaUrl = Metadata::protectedResourceUrl();
 
         $app->setHeader('Status', '401', true);
         http_response_code(401);

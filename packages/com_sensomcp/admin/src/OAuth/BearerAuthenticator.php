@@ -10,6 +10,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\TokenGroups;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolState;
 
 \defined('_JEXEC') or die;
@@ -145,7 +146,9 @@ final class BearerAuthenticator
             return null;
         }
 
-        return $this->userIsUsable($uid) ? $uid : null;
+        // Même règle que l'API Joomla : seuls les groupes autorisés dans
+        // « User - Joomla API Token » peuvent s'authentifier par jeton.
+        return $this->userIsUsable($uid) && TokenGroups::userAllowed($uid) ? $uid : null;
     }
 
     /**
