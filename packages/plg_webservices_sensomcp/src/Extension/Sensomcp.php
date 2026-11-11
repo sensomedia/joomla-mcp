@@ -6,6 +6,7 @@
 
 namespace Sensomedia\Plugin\WebServices\Sensomcp\Extension;
 
+use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Event\SubscriberInterface;
 use Joomla\Router\Route;
@@ -46,7 +47,20 @@ final class Sensomcp extends CMSPlugin implements SubscriberInterface
 
         // Endpoint MCP : public côté API app, l'auth Bearer est portée par le
         // composant (JWT OAuth ou jeton API Joomla).
-        $router->addRoute(new Route(['GET', 'POST'], 'v1/mcp', 'mcp.dispatch', [], $defaults));
+        // Transport Streamable HTTP : les clients (Cursor…) ouvrent aussi un flux SSE par
+        // GET avec Accept: text/event-stream. Sans ce format, l'API app répond 406 avant
+        // le composant et le client abandonne ; le composant répond 405 (spec MCP).
+        // Le format négocié est ramené à « json » (type de document Joomla connu).
+        $app = Factory::getApplication();
+
+        if (method_exists($app, 'addFormatMap')) {
+            $app->addFormatMap('text/event-stream', 'json');
+        }
+
+        $mcp           = $defaults;
+        $mcp['format'] = [...$defaults['format'], 'text/event-stream'];
+
+        $router->addRoute(new Route(['GET', 'POST'], 'v1/mcp', 'mcp.dispatch', [], $mcp));
 
         // Endpoints OAuth 2.1 (tous publics : ils fabriquent/décrivent les jetons).
         $router->addRoute(new Route(['POST'], 'v1/mcp/oauth/register', 'oauth.register', [], $defaults));

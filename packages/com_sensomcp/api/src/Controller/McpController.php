@@ -93,6 +93,15 @@ class McpController extends BaseController
         $app->loadIdentity($user);
         $app->getSession()->set('user', $user);
 
+        // GET = ouverture d'un flux SSE serveur → client (Streamable HTTP). Nous n'en
+        // proposons pas : la spec MCP impose alors 405, que les clients (Cursor…)
+        // traitent comme « POST seul » au lieu d'abandonner la connexion.
+        if (strtoupper((string) $app->getInput()->getMethod()) === 'GET') {
+            $this->methodNotAllowed($app);
+
+            return;
+        }
+
         $raw     = file_get_contents('php://input') ?: '';
         $decoded = json_decode($raw, true);
 
@@ -295,6 +304,20 @@ class McpController extends BaseController
             'jsonrpc' => '2.0',
             'id'      => null,
             'error'   => ['code' => -32001, 'message' => 'Unauthorized'],
+        ], JSON_UNESCAPED_SLASHES));
+    }
+
+    /** Réponse 405 au GET : pas de flux SSE serveur → client, POST uniquement. */
+    private function methodNotAllowed($app): void
+    {
+        $app->setHeader('Status', '405', true);
+        http_response_code(405);
+        $app->setHeader('Allow', 'POST', true);
+
+        $this->closeRaw($app, (string) json_encode([
+            'jsonrpc' => '2.0',
+            'id'      => null,
+            'error'   => ['code' => -32000, 'message' => 'Method Not Allowed: this server does not offer an SSE stream, use POST.'],
         ], JSON_UNESCAPED_SLASHES));
     }
 

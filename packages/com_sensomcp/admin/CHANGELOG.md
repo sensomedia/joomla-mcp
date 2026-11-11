@@ -1,5 +1,9 @@
 # Senso MCP — Changelog
 
+## 1.4.7 - 2026-11-11
+### Fixed
+- Cursor (and other clients that open an event stream after connecting) stopped with "Failed to open SSE stream: Not Acceptable". The MCP server now answers as the MCP specification expects, and these clients carry on normally.
+
 ## 1.4.6 - 2026-11-11
 ### Fixed
 - Settings page, "User - Joomla API Token": the Public and Guest groups are no longer offered in the list of groups to add.
