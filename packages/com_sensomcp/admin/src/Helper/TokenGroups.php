@@ -6,6 +6,7 @@
 
 namespace Sensomedia\Component\Sensomcp\Administrator\Helper;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
@@ -64,6 +65,29 @@ final class TokenGroups
                 // best-effort
             }
         }
+    }
+
+    /**
+     * Groupes à ne jamais proposer : Public (racine, dont tout utilisateur hérite → revient
+     * à autoriser tout le monde) et le groupe invité de com_users (jamais d'utilisateur
+     * connecté, donc jamais de jeton).
+     *
+     * @return int[]
+     */
+    public static function forbidden(): array
+    {
+        $db   = self::db();
+        $root = $db->setQuery(
+            $db->getQuery(true)
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__usergroups'))
+                ->where($db->quoteName('parent_id') . ' = 0')
+        )->loadColumn();
+
+        $ids   = array_map('intval', $root);
+        $ids[] = (int) ComponentHelper::getParams('com_users')->get('guest_usergroup', 9);
+
+        return array_values(array_unique(array_filter($ids)));
     }
 
     /** L'utilisateur appartient-il à un groupe autorisé (ou tous le sont-ils) ? */

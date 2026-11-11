@@ -116,17 +116,20 @@ class SettingsModel extends BaseDatabaseModel
             ->group('a.' . $db->quoteName('id') . ', a.' . $db->quoteName('title') . ', a.' . $db->quoteName('lft'))
             ->order('a.' . $db->quoteName('lft'));
 
-        $rows    = $db->setQuery($q)->loadAssocList();
-        $allowed = TokenGroups::allowed();
-        $sel     = [];
-        $avail   = [];
+        $rows      = $db->setQuery($q)->loadAssocList();
+        $allowed   = TokenGroups::allowed();
+        $forbidden = TokenGroups::forbidden();
+        $sel       = [];
+        $avail     = [];
 
         foreach ($rows as $r) {
             $g = ['id' => (int) $r['id'], 'title' => (string) $r['title'], 'level' => (int) $r['level']];
 
+            // Un groupe interdit déjà enregistré reste affiché (pour pouvoir le retirer),
+            // mais n'est jamais proposé à l'ajout.
             if (\in_array($g['id'], $allowed, true)) {
                 $sel[] = $g;
-            } else {
+            } elseif (!\in_array($g['id'], $forbidden, true)) {
                 $avail[] = $g;
             }
         }
@@ -143,7 +146,7 @@ class SettingsModel extends BaseDatabaseModel
                 ->where($db->quoteName('id') . ' = :id')->bind(':id', $groupId, \Joomla\Database\ParameterType::INTEGER)
         )->loadResult();
 
-        if ($exists === 0) {
+        if ($exists === 0 || ($action === 'add' && \in_array($groupId, TokenGroups::forbidden(), true))) {
             return 'invalid';
         }
 

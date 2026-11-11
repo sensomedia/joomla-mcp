@@ -1,5 +1,9 @@
 # Senso MCP — Changelog
 
+## 1.4.6 - 2026-11-11
+### Fixed
+- Settings page, "User - Joomla API Token": the Public and Guest groups are no longer offered in the list of groups to add.
+
 ## 1.4.5 - 2026-11-07
 ### Added
 - New option "OAuth discovery without /.well-known/" (Options → Security), for hosts whose server answers the `/.well-known/` addresses itself (for example SiteGround). OAuth clients (ChatGPT, claude.ai) then find the sign-in settings under `/api/`, so no server rule is needed. Off by default.
