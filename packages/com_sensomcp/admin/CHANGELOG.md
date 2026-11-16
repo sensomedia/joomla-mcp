@@ -1,5 +1,11 @@
 # Senso MCP — Changelog
 
+## 1.4.8 - 2026-11-16
+### Fixed
+- Subform custom fields (repeatable fields such as a FAQ with question/answer columns): values sent with the sub-field names or titles as keys were saved, but the rows stayed empty in the article and category edit forms. They are now converted to the keys Joomla expects (`field<ID>`), and a subform sent with unknown keys is refused with the list of expected keys instead of being saved.
+### Changed
+- `list_article_fields` and `list_category_fields` now describe each subform field: its sub-fields with the key to use, whether it is repeatable, the maximum number of rows and an example value. Rows can be sent as a simple list.
+
 ## 1.4.7 - 2026-11-11
 ### Fixed
 - Cursor (and other clients that open an event stream after connecting) stopped with "Failed to open SSE stream: Not Acceptable". The MCP server now answers as the MCP specification expects, and these clients carry on normally.

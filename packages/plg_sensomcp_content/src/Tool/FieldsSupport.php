@@ -44,7 +44,7 @@ final class FieldsSupport
         $out    = [];
 
         foreach ($this->fieldsFor($catid) as $f) {
-            $out[] = [
+            $entry = [
                 'name'     => $f->name,
                 'title'    => $f->title,
                 'type'     => $f->type,
@@ -53,6 +53,12 @@ final class FieldsSupport
                 'default'  => $f->default_value,
                 'options'  => $this->options($f),
             ];
+
+            if ($f->type === 'subform') {
+                $entry['subform'] = $this->describeSubform($f);
+            }
+
+            $out[] = $entry;
         }
 
         return $out;
@@ -80,7 +86,10 @@ final class FieldsSupport
      * Écrit des valeurs de champ (nom => valeur) sur un item.
      * Seuls les champs applicables (affectation par catégorie) sont acceptés.
      *
-     * @return array{applied:list<string>, ignored:list<string>, denied:list<string>}
+     * Un subform est validé contre sa définition (voir normalizeSubform) : en cas d'erreur il n'est PAS écrit
+     * et figure dans `invalid` (nom => message listant les clés attendues).
+     *
+     * @return array{applied:list<string>, ignored:list<string>, denied:list<string>, invalid?:array<string,string>}
      */
     public function setValues(int $itemId, int $catid, array $values): array
     {
@@ -88,10 +97,12 @@ final class FieldsSupport
             return ['applied' => [], 'ignored' => [], 'denied' => []];
         }
 
-        $map = [];
+        $map    = [];
+        $fields = [];
 
         foreach ($this->fieldsFor($catid) as $f) {
-            $map[$f->name] = (int) $f->id;
+            $map[$f->name]    = (int) $f->id;
+            $fields[$f->name] = $f;
         }
 
         $model = Factory::getApplication()->bootComponent('com_fields')
@@ -100,6 +111,7 @@ final class FieldsSupport
         $applied = [];
         $ignored = [];
         $denied  = [];
+        $invalid = [];
 
         foreach ($values as $name => $value) {
             $name = (string) $name;
@@ -111,6 +123,16 @@ final class FieldsSupport
                 continue;
             }
 
+            if ($fields[$name]->type === 'subform') {
+                [$value, $error] = $this->normalizeSubform($fields[$name], $value);
+
+                if ($error !== null) {
+                    $invalid[$name] = $error;
+
+                    continue;
+                }
+            }
+
             // setFieldValue renvoie false si l'ACL (core.edit.value) refuse.
             if ($model->setFieldValue($map[$name], $itemId, self::encodeValue($value))) {
                 $applied[] = $name;
@@ -119,7 +141,198 @@ final class FieldsSupport
             }
         }
 
-        return ['applied' => $applied, 'ignored' => $ignored, 'denied' => $denied];
+        $result = ['applied' => $applied, 'ignored' => $ignored, 'denied' => $denied];
+
+        return $invalid ? $result + ['invalid' => $invalid] : $result;
+    }
+
+    /**
+     * Structure attendue d'un champ subform (pour list_*_fields) : sous-champs, clé de stockage, répétable, exemple.
+     * Joomla (plg_fields_subform::getSubfieldsFromField) lit chaque sous-champ sous la clé `field<ID>`, jamais
+     * sous son nom ; les lignes d'un subform répétable sont des objets `row0`, `row1`… (clés libres).
+     */
+    private function describeSubform(object $field): array
+    {
+        $subs    = $this->subfields($field);
+        $repeat  = (string) self::param($field, 'repeat', '1') !== '0';
+        $max     = (int) self::param($field, 'max_rows', 0);
+        $example = [];
+
+        foreach ($subs as $sub) {
+            $example[$sub['key']] = '…';
+        }
+
+        return [
+            'repeatable' => $repeat,
+            'max_rows'   => $max > 0 ? $max : null,
+            'fields'     => $subs,
+            'value_format' => $repeat
+                ? 'A list of rows, each row keyed by the sub-field "key" (field<ID>); stored as {"row0": {...}, "row1": {...}}. '
+                    . 'Sub-field names or titles are also accepted as keys and converted. Sending the field replaces all rows.'
+                : 'One row object keyed by the sub-field "key" (field<ID>). Sub-field names or titles are also accepted.',
+            'example'    => $repeat ? [$example, $example] : $example,
+        ];
+    }
+
+    /**
+     * Valide et met au format Joomla la valeur d'un subform. Lignes acceptées en liste, en objet `rowN` ou (non
+     * répétable / ligne unique) en objet ; clés de sous-champ acceptées : `field<ID>`, `<ID>`, nom, libellé
+     * (casse et -/_ ignorés). Clé inconnue, ligne non-objet ou trop de lignes → [null, message].
+     *
+     * @return array{0: mixed, 1: ?string}
+     */
+    private function normalizeSubform(object $field, mixed $value): array
+    {
+        $subs = $this->subfields($field);
+
+        if ($subs === []) {
+            return [$value, null]; // définition illisible : comportement antérieur
+        }
+
+        $expected = implode(', ', array_map(
+            static fn ($s) => $s['key'] . ' (' . $s['title'] . ', name "' . $s['name'] . '")',
+            $subs
+        ));
+
+        if (\is_string($value) && ($decoded = json_decode($value, true)) !== null) {
+            $value = $decoded;
+        }
+
+        $value = json_decode((string) json_encode($value), true); // objets → tableaux
+
+        if (!\is_array($value)) {
+            return [null, "Subform \"{$field->name}\" expects " . 'rows of sub-field values. Expected keys: ' . $expected . '.'];
+        }
+
+        $aliases = [];
+
+        foreach ($subs as $s) {
+            foreach ([$s['key'], (string) $s['id'], $s['name'], $s['title']] as $alias) {
+                $aliases[self::aliasKey($alias)] = $s['key'];
+            }
+        }
+
+        // Une seule ligne envoyée telle quelle : uniquement des valeurs scalaires, ou uniquement des clés de sous-champ.
+        $known = static fn ($k) => isset($aliases[self::aliasKey((string) $k)]);
+        $isRow = $value !== [] && (
+            array_filter($value, 'is_array') === []
+            || \count(array_filter(array_keys($value), $known)) === \count($value)
+        );
+        $repeat = (string) self::param($field, 'repeat', '1') !== '0';
+        $rows   = $isRow ? [$value] : array_values($value);
+
+        if (!$repeat && \count($rows) > 1) {
+            return [null, "Subform \"{$field->name}\" is not repeatable: send a single row object. Expected keys: $expected."];
+        }
+
+        $max = (int) self::param($field, 'max_rows', 0);
+
+        if ($max > 0 && \count($rows) > $max) {
+            return [null, "Subform \"{$field->name}\" accepts at most $max rows (" . \count($rows) . ' sent).'];
+        }
+
+        $out     = [];
+        $unknown = [];
+
+        foreach ($rows as $i => $row) {
+            if (!\is_array($row)) {
+                return [null, "Subform \"{$field->name}\": row $i is not an object of sub-field values. Expected keys: $expected."];
+            }
+
+            $clean = [];
+
+            foreach ($row as $key => $v) {
+                $target = $aliases[self::aliasKey((string) $key)] ?? null;
+
+                if ($target === null) {
+                    $unknown[(string) $key] = true;
+
+                    continue;
+                }
+
+                $clean[$target] = $v;
+            }
+
+            $out['row' . \count($out)] = $clean;
+        }
+
+        if ($unknown) {
+            return [null, 'Unknown sub-field key(s) ' . implode(', ', array_map(static fn ($k) => '"' . $k . '"', array_keys($unknown)))
+                . " in subform \"{$field->name}\" (nothing was saved for this field). Expected keys: $expected."];
+        }
+
+        return [$repeat ? $out : ($out['row0'] ?? []), null];
+    }
+
+    /** Sous-champs d'un subform : [{key: field<ID>, id, name, title, type}] dans l'ordre de la définition. */
+    private function subfields(object $field): array
+    {
+        $options = self::param($field, 'options', []);
+        $ids     = [];
+
+        foreach ((array) $options as $o) {
+            $o  = (array) $o;
+            $id = (int) ($o['customfield'] ?? 0);
+
+            if ($id > 0) {
+                $ids[] = $id;
+            }
+        }
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $db    = Factory::getContainer()->get(DatabaseInterface::class);
+        $query = $db->getQuery(true)
+            ->select($db->quoteName(['id', 'name', 'title', 'type']))
+            ->from($db->quoteName('#__fields'))
+            ->whereIn($db->quoteName('id'), $ids);
+        $rows = $db->setQuery($query)->loadAssocList('id') ?: [];
+        $out  = [];
+
+        foreach ($ids as $id) {
+            if (isset($rows[$id])) {
+                $out[] = [
+                    'key'   => 'field' . $id,
+                    'id'    => $id,
+                    'name'  => (string) $rows[$id]['name'],
+                    'title' => (string) $rows[$id]['title'],
+                    'type'  => (string) $rows[$id]['type'],
+                ];
+            }
+        }
+
+        return $out;
+    }
+
+    private static function aliasKey(string $key): string
+    {
+        return str_replace(['-', ' '], '_', mb_strtolower(trim($key)));
+    }
+
+    /** Paramètre de fieldparams (Registry ou tableau) puis de params. */
+    private static function param(object $field, string $key, mixed $default): mixed
+    {
+        foreach (['fieldparams', 'params'] as $prop) {
+            $p = $field->{$prop} ?? null;
+
+            if (\is_object($p) && method_exists($p, 'get')) {
+                $v = $p->get($key);
+            } elseif (\is_array($p)) {
+                $v = $p[$key] ?? null;
+            } elseif (\is_string($p) && $p !== '') {
+                $v = json_decode($p, true)[$key] ?? null;
+            } else {
+                $v = null;
+            }
+
+            if ($v !== null && $v !== '') {
+                return $v;
+            }
+        }
+
+        return $default;
     }
 
     /**

@@ -62,7 +62,8 @@ final class CategoryTools
         $registry->register(
             'list_category_fields',
             'List the custom fields (com_fields, context com_content.categories) applicable to categories: '
-            . 'name, title, type, group, required, default, options. With category_id, only the fields assigned '
+            . 'name, title, type, group, required, default, options (and "subform" structure for subform fields: '
+            . 'sub-field keys field<ID>, repeatable, example). With category_id, only the fields assigned '
             . 'to that category (plus unassigned ones). Call this before setting the "fields" argument of '
             . 'create_category / update_category. For article fields use list_article_fields.',
             [
@@ -199,7 +200,9 @@ final class CategoryTools
             'type'        => 'object',
             'description' => 'Custom field values keyed by field name (discover with list_category_fields). '
                 . 'Only fields assigned to the category are applied; others are reported as ignored. '
-                . 'Complex values (subform rows, multi-select) are passed as arrays.',
+                . 'Complex values (subform rows, multi-select) are passed as arrays. Subform fields: list_category_fields '
+                . 'returns their "subform" structure; send a list of rows keyed by the sub-field key (field<ID>). A subform '
+                . 'with unknown keys is refused ("invalid") and not saved.',
         ];
     }
 

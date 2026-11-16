@@ -92,7 +92,8 @@ final class ArticleTools
             'List the custom fields (com_fields) applicable to an article category. '
             . 'Returns each field name, title, type, group, whether required, default and options '
             . '(for list types). Fields are filtered by category assignment. Call this before '
-            . 'setting the "fields" argument of create_article / update_article.',
+            . 'setting the "fields" argument of create_article / update_article. For a subform field, "subform" '
+            . 'gives its sub-fields with the key to use in each row (field<ID>), whether it is repeatable, and an example.',
             [
                 'type'       => 'object',
                 'properties' => [
@@ -136,7 +137,8 @@ final class ArticleTools
                     'fields'   => [
                         'type'        => 'object',
                         'description' => 'Custom field values keyed by field name (discover with list_article_fields). '
-                            . 'Only fields assigned to the category are applied; others are reported as ignored.',
+                            . 'Only fields assigned to the category are applied; others are reported as ignored.'
+                            . ' Subform fields: list_article_fields returns their "subform" structure; send a list of rows keyed by the sub-field key (field<ID>), e.g. [{"field13": "Question?", "field14": "<p>Answer</p>"}]. A subform with unknown keys is refused ("invalid") and not saved.',
                     ],
                     'tags'     => [
                         'type'        => 'array',
@@ -180,7 +182,8 @@ final class ArticleTools
                     'fields'   => [
                         'type'        => 'object',
                         'description' => 'Custom field values keyed by field name (see list_article_fields). '
-                            . 'Only fields assigned to the category are applied.',
+                            . 'Only fields assigned to the category are applied.'
+                            . ' Subform fields: list_article_fields returns their "subform" structure; send a list of rows keyed by the sub-field key (field<ID>), e.g. [{"field13": "Question?", "field14": "<p>Answer</p>"}]. A subform with unknown keys is refused ("invalid") and not saved.',
                     ],
                     'tags'     => [
                         'type'        => 'array',
