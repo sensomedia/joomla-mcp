@@ -1,5 +1,9 @@
 # Senso MCP Changelog endpoint — Changelog
 
+## 1.5.0 - 2026-11-17
+### Changed
+- Version aligned with the Senso MCP package (no functional change).
+
 ## 1.4.0 - 2026-10-20
 ### Changed
 - Version aligned with the Senso MCP package (no functional change).

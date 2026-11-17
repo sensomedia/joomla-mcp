@@ -11,6 +11,7 @@ use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\CMS\User\User;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 
 \defined('_JEXEC') or die;
 
@@ -33,7 +34,7 @@ final class ResourceProvider
      * @param User|null     $user   porteur du jeton (null = aucun filtrage, catalogue)
      * @param string[]|null $scopes scopes accordés (null = pas de filtrage)
      */
-    public function __construct(private ?User $user = null, private ?array $scopes = null)
+    public function __construct(private ?User $user = null, private ?array $scopes = null, private ?ToolRegistry $registry = null)
     {
     }
 
@@ -62,8 +63,11 @@ final class ResourceProvider
 
     public function list(): array
     {
+        // Ressources déclarées par les plugins (scope + ACL contrôlés par le registre).
+        $plugin = $this->registry?->resources() ?? [];
+
         if (!$this->canRead()) {
-            return [];
+            return $plugin;
         }
 
         $db = $this->db();
@@ -84,7 +88,7 @@ final class ResourceProvider
             ];
         }
 
-        return $out;
+        return array_merge($plugin, $out);
     }
 
     /** @return list<array{uriTemplate:string, name:string, description:string, mimeType:string}> */
@@ -105,6 +109,10 @@ final class ResourceProvider
      */
     public function read(string $uri): array
     {
+        if ($this->registry?->hasResource($uri)) {
+            return $this->registry->readResource($uri);
+        }
+
         if (!preg_match('#^joomla://article/(\d+)$#', $uri, $m)) {
             throw new McpToolException('Unknown resource URI: ' . $uri);
         }

@@ -21,6 +21,7 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolState;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\RateLimiter;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\BearerAuthenticator;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\Metadata;
+use Sensomedia\Component\Sensomcp\Api\Mcp\PromptProvider;
 use Sensomedia\Component\Sensomcp\Api\Mcp\ResourceProvider;
 use Sensomedia\Component\Sensomcp\Api\Mcp\Server;
 
@@ -235,7 +236,7 @@ class McpController extends BaseController
         // (scopes, lecture seule, états par outil) est construit par ToolCollector::collectFor.
         // Ressources (articles) : mêmes règles de lecture que les outils (scope content.read,
         // niveaux d'accès, état/dates) — audit 2026-10-12.
-        $server = new Server($registry, self::SERVER_NAME, self::SERVER_VERSION, new ResourceProvider($user, $scopes));
+        $server = new Server($registry, self::SERVER_NAME, self::SERVER_VERSION, new ResourceProvider($user, $scopes, $registry), new PromptProvider($registry));
         $server->setListChanged($this->sseNotifyEnabled());
 
         return $server;

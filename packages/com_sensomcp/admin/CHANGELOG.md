@@ -1,5 +1,11 @@
 # Senso MCP — Changelog
 
+## 1.5.0 - 2026-11-17
+### Added
+- Two-step confirmation for destructive tools: the first call returns a preview of the changes and a single-use token valid 5 minutes; the change is applied only when the tool is called again with the same arguments and this token.
+- Plugins can now offer MCP resources and guided prompts, alongside their tools.
+- Tools now tell MCP clients whether they only read data or may change or delete it, so the client can ask before running them.
+
 ## 1.4.8 - 2026-11-16
 ### Fixed
 - Subform custom fields (repeatable fields such as a FAQ with question/answer columns): values sent with the sub-field names or titles as keys were saved, but the rows stayed empty in the article and category edit forms. They are now converted to the keys Joomla expects (`field<ID>`), and a subform sent with unknown keys is refused with the list of expected keys instead of being saved.

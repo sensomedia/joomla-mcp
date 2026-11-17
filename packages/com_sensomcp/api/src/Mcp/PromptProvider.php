@@ -7,6 +7,7 @@
 namespace Sensomedia\Component\Sensomcp\Api\Mcp;
 
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 
 \defined('_JEXEC') or die;
 
@@ -17,8 +18,18 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
  */
 final class PromptProvider
 {
+    public function __construct(private ?ToolRegistry $registry = null)
+    {
+    }
+
     /** @return list<array{name:string, description:string, arguments:array}> */
     public function list(): array
+    {
+        return array_merge($this->corePrompts(), $this->registry?->prompts() ?? []);
+    }
+
+    /** Prompts du cœur (articles). */
+    private function corePrompts(): array
     {
         return [
             [
@@ -52,6 +63,10 @@ final class PromptProvider
      */
     public function get(string $name, array $args): array
     {
+        if ($this->registry?->hasPrompt($name)) {
+            return $this->registry->getPrompt($name, $args);
+        }
+
         $text = match ($name) {
             'draft_article'     => $this->draftArticle($args),
             'seo_audit'         => $this->seoAudit($args),

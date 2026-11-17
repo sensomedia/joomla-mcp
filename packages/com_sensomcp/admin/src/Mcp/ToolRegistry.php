@@ -93,7 +93,165 @@ class ToolRegistry
             'default_enabled' => \array_key_exists('default_enabled', $meta) ? (bool) $meta['default_enabled'] : true,
             'acl'             => $meta['acl'] ?? null,
             'acl_manage'      => !\array_key_exists('acl_manage', $meta) || (bool) $meta['acl_manage'],
+            // Outil « à confirmer » : callable fn(array $args): array|string qui décrit ce qui
+            // va changer (aperçu), SANS rien modifier. Voir call() et Confirmation.
+            'confirm'         => isset($meta['confirm']) && \is_callable($meta['confirm']) ? $meta['confirm'] : null,
         ];
+    }
+
+    /** @var array<string, array> uri => ressource déclarée par un plugin */
+    private array $resources = [];
+
+    /** @var array<string, array> nom => prompt déclaré par un plugin */
+    private array $prompts = [];
+
+    /**
+     * Déclare une ressource MCP (contenu en lecture seule joint au contexte par
+     * l'utilisateur). $reader : fn(): string|array (un tableau est rendu en JSON).
+     * Mêmes contrôles que les outils : scope accordé + meta['acl'].
+     */
+    public function registerResource(string $uri, string $name, string $description, callable $reader, string $scope = '', array $meta = []): void
+    {
+        $this->resources[$uri] = [
+            'name'        => $name,
+            'description' => $description,
+            'reader'      => $reader,
+            'scope'       => $scope,
+            'mimeType'    => (string) ($meta['mimeType'] ?? 'application/json'),
+            'acl'         => $meta['acl'] ?? null,
+        ];
+    }
+
+    /**
+     * Déclare un prompt MCP (scénario guidé lancé par l'utilisateur).
+     * $arguments : liste de {name, description, required}. $builder : fn(array $args): string.
+     * Le prompt n'est proposé que si TOUS les scopes de $scopes sont accordés et l'ACL passe.
+     *
+     * @param string[] $scopes
+     */
+    public function registerPrompt(string $name, string $description, array $arguments, callable $builder, array $scopes = [], array $meta = []): void
+    {
+        $this->prompts[$name] = [
+            'description' => $description,
+            'arguments'   => $arguments,
+            'builder'     => $builder,
+            'scopes'      => $scopes,
+            'acl'         => $meta['acl'] ?? null,
+        ];
+    }
+
+    /** @return list<array{uri:string,name:string,description:string,mimeType:string}> */
+    public function resources(): array
+    {
+        $out = [];
+
+        foreach ($this->resources as $uri => $r) {
+            if ($this->isGranted($r['scope']) && $this->passesAcl($r['acl'])) {
+                $out[] = ['uri' => $uri, 'name' => $r['name'], 'description' => $r['description'], 'mimeType' => $r['mimeType']];
+            }
+        }
+
+        return $out;
+    }
+
+    public function hasResource(string $uri): bool
+    {
+        return isset($this->resources[$uri]);
+    }
+
+    /** @return array{contents: list<array{uri:string,mimeType:string,text:string}>} */
+    public function readResource(string $uri): array
+    {
+        $r = $this->resources[$uri] ?? null;
+
+        if ($r === null) {
+            throw new McpToolException('Unknown resource URI: ' . $uri);
+        }
+
+        if (!$this->isGranted($r['scope']) || !$this->passesAcl($r['acl'])) {
+            throw new McpToolException('Insufficient permission for resource ' . $uri . '.');
+        }
+
+        $data = ($r['reader'])();
+        $text = \is_string($data) ? $data : (string) json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return ['contents' => [['uri' => $uri, 'mimeType' => $r['mimeType'], 'text' => $text]]];
+    }
+
+    /** @return list<array{name:string,description:string,arguments:array}> */
+    public function prompts(): array
+    {
+        $out = [];
+
+        foreach ($this->prompts as $name => $p) {
+            if ($this->promptAvailable($p)) {
+                $out[] = ['name' => $name, 'description' => $p['description'], 'arguments' => $p['arguments']];
+            }
+        }
+
+        return $out;
+    }
+
+    public function hasPrompt(string $name): bool
+    {
+        return isset($this->prompts[$name]);
+    }
+
+    /** @return array{description:string, messages:list<array>} */
+    public function getPrompt(string $name, array $args): array
+    {
+        $p = $this->prompts[$name] ?? null;
+
+        if ($p === null) {
+            throw new McpToolException('Unknown prompt: ' . $name);
+        }
+
+        if (!$this->promptAvailable($p)) {
+            throw new McpToolException('Insufficient permission for prompt ' . $name . '.');
+        }
+
+        foreach ($p['arguments'] as $arg) {
+            if (!empty($arg['required']) && trim((string) ($args[$arg['name']] ?? '')) === '') {
+                throw new McpToolException('Missing required argument "' . $arg['name'] . '" for prompt ' . $name . '.');
+            }
+        }
+
+        return [
+            'description' => $p['description'],
+            'messages'    => [[
+                'role'    => 'user',
+                'content' => ['type' => 'text', 'text' => (string) ($p['builder'])($args)],
+            ]],
+        ];
+    }
+
+    private function promptAvailable(array $p): bool
+    {
+        foreach ($p['scopes'] as $scope) {
+            if (!$this->isGranted((string) $scope)) {
+                return false;
+            }
+        }
+
+        return $this->passesAcl($p['acl']);
+    }
+
+    /** ACL d'une ressource / d'un prompt : null = libre ; callable fn(User): bool ; [action, asset]. */
+    private function passesAcl(mixed $acl): bool
+    {
+        if ($acl === null || $this->user === null) {
+            return true;
+        }
+
+        try {
+            if (\is_callable($acl)) {
+                return (bool) $acl($this->user, []);
+            }
+
+            return (bool) $this->user->authorise((string) ($acl[0] ?? ''), $acl[1] ?? null);
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /** Risque déduit du suffixe de scope (surchargeable via meta['risk']). */
@@ -316,10 +474,29 @@ class ToolRegistry
                 continue;
             }
 
+            $schema = $tool['inputSchema'];
+
+            // Outil à confirmer : argument du second appel ajouté au schéma + mode d'emploi.
+            if ($tool['confirm'] !== null) {
+                $props = $schema['properties'] ?? [];
+                $props = $props instanceof \stdClass ? (array) $props : (array) $props;
+                $props[Confirmation::ARG] = [
+                    'type'        => 'string',
+                    'description' => 'Leave empty on the first call: you get a preview of the changes and a token. '
+                        . 'Show the preview to the user; once they agree, call again with the SAME arguments and this token '
+                        . '(single use, valid ' . (Confirmation::TTL / 60) . ' minutes).',
+                ];
+                $schema['properties'] = $props;
+            }
+
             $out[] = [
                 'name'        => $name,
                 'description' => $tool['description'],
-                'inputSchema' => (object) $tool['inputSchema'],
+                'inputSchema' => (object) $schema,
+                // Indications MCP pour le client (2025-06-18) : lecture seule / destructif.
+                'annotations' => (object) ($tool['risk'] === 'safe'
+                    ? ['readOnlyHint' => true]
+                    : ['readOnlyHint' => false, 'destructiveHint' => $tool['confirm'] !== null]),
             ];
         }
 
@@ -391,6 +568,34 @@ class ToolRegistry
         // le handler échoue ensuite.
         DebugLog::toolCall($name, $arguments);
 
+        // Confirmation en deux temps : 1er appel = aperçu + jeton ; 2e appel (mêmes
+        // arguments + jeton valide, à usage unique) = exécution.
+        if ($tool['confirm'] !== null) {
+            $userId = (int) ($this->user->id ?? 0);
+            $token  = trim((string) ($arguments[Confirmation::ARG] ?? ''));
+            unset($arguments[Confirmation::ARG]);
+
+            if ($token === '') {
+                $preview = ($tool['confirm'])($arguments);
+
+                return $this->textResult([
+                    'confirmation_required' => true,
+                    'preview'               => $preview,
+                    Confirmation::ARG       => Confirmation::issue($userId, $name, $arguments),
+                    'expires_in_seconds'    => Confirmation::TTL,
+                    'next_step'             => 'Nothing has been changed yet. Show this preview to the user and ask for '
+                        . 'confirmation. If they agree, call ' . $name . ' again with exactly the same arguments plus '
+                        . Confirmation::ARG . '.',
+                ]);
+            }
+
+            if (!Confirmation::consume($token, $userId, $name, $arguments)) {
+                throw new McpToolException('Invalid confirmation: the token is unknown, expired, already used, or the '
+                    . 'arguments differ from the previewed call. Call ' . $name . ' again without '
+                    . Confirmation::ARG . ' to get a new preview.');
+            }
+        }
+
         try {
             $result = ($tool['handler'])($arguments);
         } catch (\Throwable $e) {
@@ -399,6 +604,12 @@ class ToolRegistry
             throw $e;
         }
 
+        return $this->textResult($result);
+    }
+
+    /** Résultat MCP texte (un tableau / objet est rendu en JSON lisible). */
+    private function textResult(mixed $result): array
+    {
         if (!\is_string($result)) {
             $result = json_encode(
                 $result,
