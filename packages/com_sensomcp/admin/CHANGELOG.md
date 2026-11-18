@@ -1,5 +1,9 @@
 # Senso MCP — Changelog
 
+## 1.5.2 - 2026-11-18
+### Fixed
+- On single-language sites, article, category and tag links no longer end with a useless `?lang=xx-XX`.
+
 ## 1.5.1 - 2026-11-18
 ### Fixed
 - Authors allowed to edit only their own articles can now read their own unpublished articles with `get_article` and find them with `search_articles`.

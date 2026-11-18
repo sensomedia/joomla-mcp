@@ -7,6 +7,7 @@
 namespace Sensomedia\Plugin\Sensomcp\Content\Support;
 
 use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Language\Multilanguage;
 use Joomla\CMS\Router\Route;
 
 \defined('_JEXEC') or die;
@@ -53,7 +54,14 @@ trait ResolvesPublicUrls
      */
     private function publicUrlData(string $queryBase, string $language): array
     {
-        $langs = ($language === '*') ? $this->activeContentLanguages() : [(string) $language];
+        // Site monolingue (filtre de langue désactivé) : le routeur ne consomme pas `lang`,
+        // qui resterait en `?lang=xx-XX` dans l'URL → une seule URL, sans langue.
+        if (!$this->siteIsMultilingual()) {
+            $langs = [''];
+        } else {
+            $langs = ($language === '*') ? $this->activeContentLanguages() : [(string) $language];
+        }
+
         $built = [];
 
         foreach ($langs as $code) {
@@ -176,6 +184,16 @@ trait ResolvesPublicUrls
         }
 
         return $this->activeLanguagesCache = $out;
+    }
+
+    /** Site multilingue = plugin système « Filtre de langue » actif (lu en base, fiable en contexte API). */
+    private function siteIsMultilingual(): bool
+    {
+        try {
+            return Multilanguage::isEnabled();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /** Code de la langue de contenu par défaut du site. */
