@@ -1,5 +1,9 @@
 # Senso MCP — Changelog
 
+## 1.5.1 - 2026-11-18
+### Fixed
+- Authors allowed to edit only their own articles can now read their own unpublished articles with `get_article` and find them with `search_articles`.
+
 ## 1.5.0 - 2026-11-17
 ### Added
 - Two-step confirmation for destructive tools: the first call returns a preview of the changes and a single-use token valid 5 minutes; the change is applied only when the tool is called again with the same arguments and this token.

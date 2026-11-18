@@ -1001,16 +1001,46 @@ final class ArticleTools
      * Restreint une requête #__content aux articles visibles par l'utilisateur du
      * jeton : niveaux d'accès (view levels) autorisés, et état publié seulement
      * sauf s'il peut éditer le contenu. §5 audit ACL (anti-fuite brouillons/corbeille).
+     *
+     * Un auteur qui n'a que core.edit.own voit aussi ses propres articles non publiés
+     * (cohérent avec update_article, qui l'autorise déjà à les modifier) ; jamais ceux
+     * des autres. $stateFilter = false laisse le contrôle d'état à l'appelant
+     * (get_article fait un contrôle précis au niveau de l'asset de l'article).
      */
-    private function applyReadAcl($db, $q): void
+    private function applyReadAcl($db, $q, bool $stateFilter = true): void
     {
         $levels = $this->user->getAuthorisedViewLevels() ?: [1];
         $q->whereIn($db->quoteName('access'), array_map('intval', $levels));
 
-        if (!$this->user->authorise('core.edit', 'com_content')
-            && !$this->user->authorise('core.edit.state', 'com_content')) {
-            $q->where($db->quoteName('state') . ' = 1');
+        if (!$stateFilter
+            || $this->user->authorise('core.edit', 'com_content')
+            || $this->user->authorise('core.edit.state', 'com_content')) {
+            return;
         }
+
+        $uid = (int) $this->user->id;
+
+        if ($uid > 0 && $this->user->authorise('core.edit.own', 'com_content')) {
+            $q->where('(' . $db->quoteName('state') . ' = 1 OR ' . $db->quoteName('created_by') . ' = ' . $uid . ')');
+
+            return;
+        }
+
+        $q->where($db->quoteName('state') . ' = 1');
+    }
+
+    /**
+     * Lecture d'un article non publié : droits d'édition (ou d'édition de l'état)
+     * évalués sur l'asset de l'article, donc en tenant compte des permissions
+     * posées sur sa catégorie ou sur l'article lui-même ; core.edit.own ne vaut
+     * que pour l'auteur. Même règle que update_article.
+     */
+    private function canReadUnpublished(int $id, int $createdBy): bool
+    {
+        $asset = 'com_content.article.' . $id;
+
+        return $this->user->authorise('core.edit.state', $asset)
+            || FormGate::canEdit($this->user, $asset, $createdBy);
     }
 
     private function searchArticles(array $a): array
@@ -1057,9 +1087,14 @@ final class ArticleTools
             ->from($db->quoteName('#__content'))
             ->where($db->quoteName('id') . ' = :id')
             ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER);
-        $this->applyReadAcl($db, $q);
+        $this->applyReadAcl($db, $q, false);
 
         $row = $db->setQuery($q)->loadAssoc();
+
+        // Même réponse « introuvable » pour un article non publié non lisible : ne révèle pas son existence.
+        if ($row && (int) $row['state'] !== 1 && !$this->canReadUnpublished((int) $row['id'], (int) $row['created_by'])) {
+            $row = null;
+        }
 
         if (!$row) {
             throw new McpToolException('Article not found: ' . $id);
