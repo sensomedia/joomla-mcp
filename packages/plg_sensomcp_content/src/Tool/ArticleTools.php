@@ -13,6 +13,7 @@ use Joomla\CMS\Router\Route;
 use Joomla\Database\DatabaseInterface;
 use Joomla\CMS\User\User;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\ActionLogContext;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\Ordering;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\Pagination;
@@ -1359,7 +1360,10 @@ final class ArticleTools
 
         $model = $this->articleModel();
 
-        if (!$model->publish($ids, $state)) {
+        // ActionLogContext : sans lui, le changement d'état n'apparaît pas dans le journal des actions.
+        if (!ActionLogContext::run('com_content', static function () use ($model, &$ids, $state) {
+            return $model->publish($ids, $state);
+        })) {
             throw new McpToolException('State change failed: ' . $this->modelErrors($model));
         }
 
@@ -1388,7 +1392,9 @@ final class ArticleTools
         $model = $this->articleModel();
 
         // Joomla exige la corbeille (état -2) avant toute suppression définitive.
-        if (!$model->publish($ids, -2)) {
+        if (!ActionLogContext::run('com_content', static function () use ($model, &$ids) {
+            return $model->publish($ids, -2);
+        })) {
             throw new McpToolException('Trashing failed: ' . $this->modelErrors($model));
         }
 
@@ -1399,7 +1405,9 @@ final class ArticleTools
         // delete() reçoit les pks par référence et nettoie assets/associations.
         $pks = $ids;
 
-        if (!$model->delete($pks)) {
+        if (!ActionLogContext::run('com_content', static function () use ($model, &$pks) {
+            return $model->delete($pks);
+        })) {
             throw new McpToolException('Permanent deletion failed: ' . $this->modelErrors($model));
         }
 

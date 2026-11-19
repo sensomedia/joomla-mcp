@@ -20,6 +20,8 @@ With the free pack, an assistant can:
 - list, compare and restore **article versions**;
 - read **site information** (languages, template, versions) to ground its actions;
 - fetch a rendered front-end page to check the result;
+- manage **contacts** (Contacts component) and their categories;
+- manage **banners** and advertisers, and read impression and click statistics;
 - clear the Joomla caches.
 
 ## Security
@@ -54,6 +56,8 @@ A step-by-step guide is available in the
 | `packages/plg_task_sensomcp` | Scheduled task plugin: maintenance |
 | `packages/plg_sensomcp_site` | Tools: site information |
 | `packages/plg_sensomcp_content` | Tools: articles, categories, tags, versions |
+| `packages/plg_sensomcp_contact` | Tools: contacts (com_contact) |
+| `packages/plg_sensomcp_banners` | Tools: banners, clients and statistics (com_banners) |
 
 ## Going further
 

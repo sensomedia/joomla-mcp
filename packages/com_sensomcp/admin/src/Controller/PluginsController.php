@@ -181,8 +181,8 @@ class PluginsController extends BaseController
             $this->ajaxOut(false, Text::_('COM_SENSOMCP_CATALOG_INSTALL_UNKNOWN'));
         }
 
-        // Le cœur gratuit (content, site) ne se désinstalle pas via cet écran.
-        if (\in_array($element, ['content', 'site'], true)) {
+        // Le cœur gratuit (content, site, contact, banners) ne se désinstalle pas via cet écran.
+        if (\in_array($element, ['content', 'site', 'contact', 'banners'], true)) {
             $this->ajaxOut(false, Text::_('COM_SENSOMCP_CATALOG_UNINSTALL_CORE'));
         }
 

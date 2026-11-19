@@ -261,7 +261,7 @@ class PluginsModel extends BaseDatabaseModel
             ];
         }
 
-        // Plugins installés hors catalogue = socle free (site, content).
+        // Plugins installés hors catalogue = socle free (site, content, contact, banners).
         foreach ($installed as $el => $inst) {
             if (isset($map[$el])) {
                 continue;

@@ -1,5 +1,15 @@
 # Senso MCP — Changelog
 
+## 1.6.0 - 2026-11-19
+### Added
+- New free plugin "Senso MCP - Contacts", included in the package: list, read, create, change, publish and delete contacts of the Joomla Contacts component, with their categories and custom fields, with separate "read" and "manage" permissions.
+- New free plugin "Senso MCP - Banners", included in the package: banners, clients and categories of the Joomla Banners component, impression and click statistics, and a check that a Banners module actually displays them. Custom banner code can only be set by users allowed to publish unfiltered HTML.
+### Fixed
+- Publishing, unpublishing, trashing and deleting articles, categories and tags through Senso MCP now appear in the Joomla action log, like changes made in the back-end.
+### Changed
+- The guarded HTTP client used by the tools can now return a redirect without following it (needed by the Senso MCP — Redirects add-on).
+- New helper for add-ons, so that their state changes and deletions are recorded in the action log as well. Add-on versions that use it require Senso MCP 1.6.0.
+
 ## 1.5.2 - 2026-11-18
 ### Fixed
 - On single-language sites, article, category and tag links no longer end with a useless `?lang=xx-XX`.

@@ -42,8 +42,8 @@ final class PluginRow
         [$bg, $fg, $tkey] = self::TIER[$p['tier']] ?? self::TIER['addon'];
 
         $el     = (string) ($p['element'] ?? '');
-        // Le cœur gratuit (content, site) fait partie du pack free : pas de désinstallation.
-        $core   = \in_array($el, ['content', 'site'], true);
+        // Le cœur gratuit (content, site, contact, banners) fait partie du pack free : pas de désinstallation.
+        $core   = \in_array($el, ['content', 'site', 'contact', 'banners'], true);
         $tid    = 'tools_' . $el;
         $tools  = $p['tools'] ?? [];
         $name   = (string) ($p['name'] ?? '') ?: $el;

@@ -13,6 +13,7 @@ use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Registry\Registry;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\ActionLogContext;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 use Sensomedia\Plugin\Sensomcp\Content\Support\ResolvesPublicUrls;
@@ -497,7 +498,9 @@ final class CategoryTools
         // puis on vérifie l'état réel en base plutôt que la valeur de retour.
         $trash = $ids;
 
-        if (!$model->publish($trash, -2)) {
+        if (!ActionLogContext::run('com_categories', static function () use ($model, &$trash) {
+            return $model->publish($trash, -2);
+        })) {
             throw new McpToolException('Trashing failed: ' . $this->modelErrors($model));
         }
 
@@ -506,7 +509,9 @@ final class CategoryTools
         }
 
         $pks = $ids;
-        $model->delete($pks);
+        ActionLogContext::run('com_categories', static function () use ($model, &$pks) {
+            return $model->delete($pks);
+        });
 
         $remaining = $this->existingIds($ids);
         $deleted   = array_values(array_diff($ids, $remaining));

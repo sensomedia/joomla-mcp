@@ -75,6 +75,8 @@ final class UrlGuard
      *  - connect_timeout secondes (défaut 10)
      *  - max_bytes     taille maximale du corps (0 = illimité) ; dépassement → exception
      *  - max_redirects sauts suivis (défaut 3), chaque Location revalidée
+     *  - follow_redirects false : renvoie la première réponse telle quelle, 3xx compris
+     *                  (défaut true ; sert à inspecter une redirection sans la suivre)
      *  - same_site     true : l'hôte doit être celui du site à chaque saut, pas de contrôle
      *                  d'adresse (le site lui-même peut être privé en dev)
      *  - verify_ssl    défaut true
@@ -96,7 +98,8 @@ final class UrlGuard
                 ? self::curlRequest($target, $method, $options)
                 : self::streamRequest($target, $method, $options);
 
-            if (!\in_array($response->code, [301, 302, 303, 307, 308], true) || empty($response->headers['location'])) {
+            if (!\in_array($response->code, [301, 302, 303, 307, 308], true) || empty($response->headers['location'])
+                || !($options['follow_redirects'] ?? true)) {
                 return $response;
             }
 

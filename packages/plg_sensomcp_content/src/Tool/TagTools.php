@@ -11,6 +11,7 @@ use Joomla\CMS\Form\Form;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\ActionLogContext;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 use Sensomedia\Plugin\Sensomcp\Content\Support\ResolvesPublicUrls;
@@ -317,7 +318,9 @@ final class TagTools
         // pour préserver $ids, puis vérification de l'état réel en base.
         $trash = $ids;
 
-        if (!$model->publish($trash, -2)) {
+        if (!ActionLogContext::run('com_tags', static function () use ($model, &$trash) {
+            return $model->publish($trash, -2);
+        })) {
             throw new McpToolException('Trashing failed: ' . $this->modelErrors($model));
         }
 
@@ -326,7 +329,9 @@ final class TagTools
         }
 
         $pks = $ids;
-        $model->delete($pks);
+        ActionLogContext::run('com_tags', static function () use ($model, &$pks) {
+            return $model->delete($pks);
+        });
 
         $remaining = $this->existingIds($ids);
         $deleted   = array_values(array_diff($ids, $remaining));
