@@ -19,6 +19,7 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolCollector;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolState;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\RateLimiter;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\SiteMenuFallback;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\BearerAuthenticator;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\Metadata;
 use Sensomedia\Component\Sensomcp\Api\Mcp\PromptProvider;
@@ -64,6 +65,10 @@ class McpController extends BaseController
 
         $app = Factory::getApplication();
         $ip  = (string) $app->getInput()->server->get('REMOTE_ADDR', '', 'string');
+
+        // Plugins tiers qui appellent getMenu() pendant un enregistrement : menu du site
+        // au lieu de l'exception « Error loading menu: api » (voir SiteMenuFallback).
+        SiteMenuFallback::install($app);
 
         // Arrêt d'urgence : verrou global (réponse à incident). Refuse TOUTE
         // requête, quel que soit le jeton, avant même l'authentification.

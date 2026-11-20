@@ -1,5 +1,9 @@
 # Senso MCP — Changelog
 
+## 1.6.1 - 2026-11-20
+### Fixed
+- Saving an article (or other content) through Senso MCP no longer fails with "Error loading menu: api" when a third-party plugin, such as SpeedCache or a Smart Search content plugin, reads the site menu during the save. These plugins now get the site menu, so the save is reported correctly and their own work (for example clearing the page cache) is done.
+
 ## 1.6.0 - 2026-11-19
 ### Added
 - New free plugin "Senso MCP - Contacts", included in the package: list, read, create, change, publish and delete contacts of the Joomla Contacts component, with their categories and custom fields, with separate "read" and "manage" permissions.
