@@ -7,14 +7,17 @@
 namespace Sensomedia\Component\Sensomcp\Administrator\Model;
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\Helper\UserGroupsHelper;
 use Joomla\CMS\Http\HttpFactory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\UserFactoryInterface;
 use Sensomedia\Component\Sensomcp\Administrator\Helper\ComponentParams;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\ExtensionRecords;
 use Sensomedia\Component\Sensomcp\Administrator\Helper\Htaccess;
 use Sensomedia\Component\Sensomcp\Administrator\Helper\TokenGroups;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\ActionLogContext;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolCollector;
 use Sensomedia\Component\Sensomcp\Administrator\OAuth\Metadata;
 
@@ -63,31 +66,35 @@ class SettingsModel extends BaseDatabaseModel
     ];
 
     /**
-     * Active les plugins requis installés mais désactivés ($key = « folder.element »,
-     * vide = tous). @return int nombre de plugins activés
+     * Active les plugins requis installés mais désactivés ($key = « folder.element », vide = tous).
+     * Modèle « Plugin » de com_plugins (J5/J6) : ACL core.edit.state com_plugins (déjà exigée par le
+     * contrôleur), événements, purge du cache com_plugins, journal des actions.
+     *
+     * @return int nombre de plugins activés
      */
     public function enableRequiredPlugins(string $key = ''): int
     {
-        $db    = $this->getDatabase();
-        $count = 0;
+        $pks = [];
 
         foreach (self::REQUIRED_PLUGINS as $p) {
             if ($key !== '' && $key !== $p['folder'] . '.' . $p['element']) {
                 continue;
             }
 
-            $q = $db->getQuery(true)
-                ->update($db->quoteName('#__extensions'))
-                ->set($db->quoteName('enabled') . ' = 1')
-                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                ->where($db->quoteName('folder') . ' = :folder')
-                ->where($db->quoteName('element') . ' = :element')
-                ->where($db->quoteName('enabled') . ' = 0')
-                ->bind(':folder', $p['folder'])
-                ->bind(':element', $p['element']);
+            $row = ExtensionRecords::plugin($p['folder'], $p['element']);
 
-            $db->setQuery($q)->execute();
-            $count += (int) $db->getAffectedRows();
+            if ($row && (int) $row->enabled === 0) {
+                $pks[] = (int) $row->extension_id;
+            }
+        }
+
+        if ($pks !== []) {
+            $model = Factory::getApplication()->bootComponent('com_plugins')
+                ->getMVCFactory()->createModel('Plugin', 'Administrator', ['ignore_request' => true]);
+
+            ActionLogContext::run('com_plugins', static function () use ($model, &$pks) {
+                return $model->publish($pks, 1);
+            });
         }
 
         foreach (['com_plugins', '_system'] as $group) {
@@ -98,32 +105,25 @@ class SettingsModel extends BaseDatabaseModel
             }
         }
 
-        return $count;
+        // Compte réel (publish() écarte en silence les plugins refusés par l'ACL).
+        return \count(array_filter($pks, static fn (int $id) => (int) (ExtensionRecords::byId($id)->enabled ?? 0) === 1));
     }
 
     /**
      * Groupes autorisés à créer / utiliser un jeton API Joomla (plg_user_token).
+     * Arbre des groupes : UserGroupsHelper du cœur (tri lft, niveau calculé).
      *
      * @return array{all:bool, selected:list<array{id:int,title:string}>, available:list<array{id:int,title:string,level:int}>}
      */
     public function getTokenGroups(): array
     {
-        $db   = $this->getDatabase();
-        $q    = $db->getQuery(true)
-            ->select('a.' . $db->quoteName('id') . ', a.' . $db->quoteName('title') . ', COUNT(DISTINCT b.' . $db->quoteName('id') . ') AS ' . $db->quoteName('level'))
-            ->from($db->quoteName('#__usergroups', 'a'))
-            ->join('LEFT', $db->quoteName('#__usergroups', 'b'), 'a.' . $db->quoteName('lft') . ' > b.' . $db->quoteName('lft') . ' AND a.' . $db->quoteName('rgt') . ' < b.' . $db->quoteName('rgt'))
-            ->group('a.' . $db->quoteName('id') . ', a.' . $db->quoteName('title') . ', a.' . $db->quoteName('lft'))
-            ->order('a.' . $db->quoteName('lft'));
-
-        $rows      = $db->setQuery($q)->loadAssocList();
         $allowed   = TokenGroups::allowed();
         $forbidden = TokenGroups::forbidden();
         $sel       = [];
         $avail     = [];
 
-        foreach ($rows as $r) {
-            $g = ['id' => (int) $r['id'], 'title' => (string) $r['title'], 'level' => (int) $r['level']];
+        foreach (UserGroupsHelper::getInstance()->getAll() as $grp) {
+            $g = ['id' => (int) $grp->id, 'title' => (string) $grp->title, 'level' => (int) ($grp->level ?? 0)];
 
             // Un groupe interdit déjà enregistré reste affiché (pour pouvoir le retirer),
             // mais n'est jamais proposé à l'ajout.
@@ -140,13 +140,9 @@ class SettingsModel extends BaseDatabaseModel
     /** @return string ok | last (refus de retirer le dernier groupe) | invalid */
     public function changeTokenGroup(string $action, int $groupId): string
     {
-        $db     = $this->getDatabase();
-        $exists = (int) $db->setQuery(
-            $db->getQuery(true)->select('COUNT(*)')->from($db->quoteName('#__usergroups'))
-                ->where($db->quoteName('id') . ' = :id')->bind(':id', $groupId, \Joomla\Database\ParameterType::INTEGER)
-        )->loadResult();
+        $exists = isset(UserGroupsHelper::getInstance()->getAll()[$groupId]);
 
-        if ($exists === 0 || ($action === 'add' && \in_array($groupId, TokenGroups::forbidden(), true))) {
+        if (!$exists || ($action === 'add' && \in_array($groupId, TokenGroups::forbidden(), true))) {
             return 'invalid';
         }
 
@@ -169,31 +165,19 @@ class SettingsModel extends BaseDatabaseModel
         return 'ok';
     }
 
-    /** Statut des plugins requis. */
+    /** Statut des plugins requis (lignes #__extensions via la table du cœur, non cachées). */
     public function getPluginStatus(): array
     {
-        $required = self::REQUIRED_PLUGINS;
-
-        $db  = $this->getDatabase();
         $out = [];
 
-        foreach ($required as $p) {
-            $query = $db->getQuery(true)
-                ->select($db->quoteName('enabled'))
-                ->from($db->quoteName('#__extensions'))
-                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                ->where($db->quoteName('folder') . ' = :folder')
-                ->where($db->quoteName('element') . ' = :element')
-                ->bind(':folder', $p['folder'])
-                ->bind(':element', $p['element']);
-
-            $enabled = $db->setQuery($query)->loadResult();
+        foreach (self::REQUIRED_PLUGINS as $p) {
+            $row = ExtensionRecords::plugin($p['folder'], $p['element']);
 
             $out[] = [
                 'key'       => $p['folder'] . '.' . $p['element'],
                 'label'     => $p['label'],
-                'installed' => $enabled !== null,
-                'enabled'   => (int) $enabled === 1,
+                'installed' => $row !== null,
+                'enabled'   => $row !== null && (int) $row->enabled === 1,
             ];
         }
 

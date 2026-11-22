@@ -34,6 +34,34 @@ final class Ordering
         ?int $before,
         ?int $after
     ): array {
+        $siblings = self::compute($siblings, $moveId, $before, $after);
+
+        // Renumérotation séquentielle (1..N).
+        foreach ($siblings as $i => $sid) {
+            $order = $i + 1;
+            $q     = $db->getQuery(true)
+                ->update($db->quoteName($table))
+                ->set($db->quoteName($orderColumn) . ' = ' . $order)
+                ->where($db->quoteName($idColumn) . ' = ' . (int) $sid);
+            $db->setQuery($q)->execute();
+        }
+
+        return $siblings;
+    }
+
+    /**
+     * Calcule le nouvel ordre SANS rien écrire : l'appelant le persiste via le
+     * modèle du cœur (`AdminModel::saveorder($ids, range(1, N))`), qui gère ACL,
+     * conditions de réordonnancement de la table et vidage du cache.
+     *
+     * @param int[]    $siblings ids des frères dans l'ordre courant
+     *
+     * @return int[] nouvel ordre des ids
+     *
+     * @since 1.7.0
+     */
+    public static function compute(array $siblings, int $moveId, ?int $before, ?int $after): array
+    {
         $siblings = array_values(array_unique(array_map('intval', $siblings)));
 
         if (!\in_array($moveId, $siblings, true)) {
@@ -63,16 +91,6 @@ final class Ordering
         $pos      = array_search($ref, $siblings, true);
         $insertAt = $before ? $pos : $pos + 1;
         array_splice($siblings, $insertAt, 0, [$moveId]);
-
-        // Renumérotation séquentielle (1..N).
-        foreach ($siblings as $i => $sid) {
-            $order = $i + 1;
-            $q     = $db->getQuery(true)
-                ->update($db->quoteName($table))
-                ->set($db->quoteName($orderColumn) . ' = ' . $order)
-                ->where($db->quoteName($idColumn) . ' = ' . (int) $sid);
-            $db->setQuery($q)->execute();
-        }
 
         return $siblings;
     }

@@ -12,6 +12,7 @@
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Installer\InstallerAdapter;
+use Joomla\CMS\Table\Extension;
 use Joomla\Database\DatabaseInterface;
 
 class PlgSystemSensomcpInstallerScript
@@ -27,38 +28,27 @@ class PlgSystemSensomcpInstallerScript
 
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $db->setQuery(
-                $db->getQuery(true)
-                    ->update($db->quoteName('#__extensions'))
-                    ->set($db->quoteName('enabled') . ' = 1')
-                    ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                    ->where($db->quoteName('folder') . ' = ' . $db->quote(self::FOLDER))
-                    ->where($db->quoteName('element') . ' = ' . $db->quote(self::ELEMENT))
-            )->execute();
+            // Table « Extension » du cœur (J5/J6), comme l'installeur de Joomla : pas de contrôle d'ACL,
+            // indispensable en installation CLI (aucun utilisateur connecté).
+            $table = new Extension($db);
 
-            // Épingler en TÊTE des plugins système : ce plugin sert /.well-known/
-            // et fait $app->close() ; le passer avant tout plugin qui court-
-            // circuiterait tôt onAfterInitialise (maintenance, redirection, cache
-            // qui sert la page). Robustesse par construction, sans action admin.
-            $min = $db->setQuery(
-                $db->getQuery(true)
-                    ->select('MIN(' . $db->quoteName('ordering') . ')')
-                    ->from($db->quoteName('#__extensions'))
-                    ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                    ->where($db->quoteName('folder') . ' = ' . $db->quote(self::FOLDER))
-                    ->where($db->quoteName('element') . ' <> ' . $db->quote(self::ELEMENT))
-            )->loadResult();
+            if ($table->load(['type' => 'plugin', 'folder' => self::FOLDER, 'element' => self::ELEMENT])) {
+                // Épingler en TÊTE des plugins système (avant tout plugin qui court-circuiterait tôt
+                // onAfterInitialise). EXCEPTION SQL assumée : le cœur n'offre aucune API pour lire le plus
+                // petit `ordering` d'un groupe de plugins (Table::getNextOrder() ne donne que le max).
+                $min = $db->setQuery(
+                    $db->getQuery(true)
+                        ->select('MIN(' . $db->quoteName('ordering') . ')')
+                        ->from($db->quoteName('#__extensions'))
+                        ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                        ->where($db->quoteName('folder') . ' = ' . $db->quote(self::FOLDER))
+                        ->where($db->quoteName('element') . ' <> ' . $db->quote(self::ELEMENT))
+                )->loadResult();
 
-            $ordering = $min === null ? 0 : ((int) $min - 1);
-
-            $db->setQuery(
-                $db->getQuery(true)
-                    ->update($db->quoteName('#__extensions'))
-                    ->set($db->quoteName('ordering') . ' = ' . $ordering)
-                    ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                    ->where($db->quoteName('folder') . ' = ' . $db->quote(self::FOLDER))
-                    ->where($db->quoteName('element') . ' = ' . $db->quote(self::ELEMENT))
-            )->execute();
+                $table->enabled  = 1;
+                $table->ordering = $min === null ? 0 : ((int) $min - 1);
+                $table->store();
+            }
 
             // Prise en compte immédiate (le cache com_plugins masque sinon le plugin).
             Factory::getCache('com_plugins')->clean();

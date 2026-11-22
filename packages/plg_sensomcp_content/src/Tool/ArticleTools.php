@@ -9,7 +9,11 @@ namespace Sensomedia\Plugin\Sensomcp\Content\Tool;
 use Joomla\CMS\Date\Date;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Form;
-use Joomla\CMS\Router\Route;
+use Joomla\CMS\Helper\TagsHelper;
+use Joomla\CMS\Table\Category as CategoryTable;
+use Joomla\CMS\Table\ViewLevel;
+use Joomla\CMS\User\UserFactoryInterface;
+use Joomla\Component\Content\Site\Helper\RouteHelper;
 use Joomla\Database\DatabaseInterface;
 use Joomla\CMS\User\User;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
@@ -20,6 +24,7 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\Pagination;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\UrlGuard;
 use Sensomedia\Plugin\Sensomcp\Content\Support\ResolvesPublicUrls;
+use Sensomedia\Plugin\Sensomcp\Content\Support\SavesArticleModel;
 
 \defined('_JEXEC') or die;
 
@@ -34,6 +39,7 @@ use Sensomedia\Plugin\Sensomcp\Content\Support\ResolvesPublicUrls;
 final class ArticleTools
 {
     use ResolvesPublicUrls;
+    use SavesArticleModel;
 
     public function __construct(private User $user, private bool $allowWrite, private int $defaultCatid, private int $defaultState)
     {
@@ -48,12 +54,12 @@ final class ArticleTools
 
         $registry->register(
             'search_articles',
-            'Search articles by title. Returns id, title, alias, catid, state, featured, access, language, dates (created, modified, publish_up, publish_down; UTC). '
+            'Search articles (same search as the Joomla backend article list: title, alias and note). Returns id, title, alias, catid, state, featured, access, language, dates (created, modified, publish_up, publish_down; UTC). '
             . 'Sortable by creation/modification/publish-up date, id or title.',
             [
                 'type'       => 'object',
                 'properties' => [
-                    'query'     => ['type' => 'string', 'description' => 'Text to search in the title (optional).'],
+                    'query'     => ['type' => 'string', 'description' => 'Text to search in the title, alias or note (optional). Prefixes: "id:12", "author:name", "content:text" (intro/full text).'],
                     'limit'     => ['type' => 'integer', 'description' => 'Max number of results (default 20, max 100).'],
                     'offset'    => ['type' => 'integer', 'description' => 'Result offset for pagination (default 0).'],
                     'order'     => [
@@ -311,53 +317,71 @@ final class ArticleTools
         return new FieldsSupport();
     }
 
-    private function articleCatid(int $id): int
+    /**
+     * Ligne #__content d'un article via la table du modèle Article (null si absente).
+     * Lecture légère (sans les jointures de getItem) pour catid / created_by.
+     */
+    private function articleRow(int $id): ?object
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName('catid'))
-            ->from($db->quoteName('#__content'))
-            ->where($db->quoteName('id') . ' = :id')
-            ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER);
+        if ($id <= 0) {
+            return null;
+        }
 
-        return (int) $db->setQuery($q)->loadResult();
-    }
+        $table = $this->articleModel()->getTable();
 
-    /** Ids (entiers) des tags actuellement affectés à un article. */
-    private function currentTagIds(int $id): array
-    {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName('tag_id'))
-            ->from($db->quoteName('#__contentitem_tag_map'))
-            ->where($db->quoteName('type_alias') . ' = ' . $db->quote('com_content.article'))
-            ->where($db->quoteName('content_item_id') . ' = :id')
-            ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER);
-
-        return array_map('intval', $db->setQuery($q)->loadColumn());
-    }
-
-    /** Tags affectés (id + titre) d'un article, pour la lecture. */
-    private function articleTags(int $id): array
-    {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['t.id', 't.title']))
-            ->from($db->quoteName('#__contentitem_tag_map', 'm'))
-            ->join(
-                'INNER',
-                $db->quoteName('#__tags', 't')
-                . ' ON ' . $db->quoteName('t.id') . ' = ' . $db->quoteName('m.tag_id')
-            )
-            ->where($db->quoteName('m.type_alias') . ' = ' . $db->quote('com_content.article'))
-            ->where($db->quoteName('m.content_item_id') . ' = :id')
-            ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER);
-
-        return $db->setQuery($q)->loadAssocList();
+        return $table->load($id) ? $table : null;
     }
 
     /**
-     * Valide une liste d'ids de tags contre #__tags.
+     * Article complet via ArticleModel::getItem() (J5/J6) : images, urls, attribs et
+     * metadata décodés, featured_up/down (jointure frontpage), ids de tags (TagsHelper).
+     * null si l'article n'existe pas.
+     */
+    private function loadArticle(int $id): ?object
+    {
+        if ($id <= 0) {
+            return null;
+        }
+
+        $item = $this->articleModel()->getItem($id);
+
+        return ($item && !empty($item->id)) ? $item : null;
+    }
+
+    private function articleCatid(int $id): int
+    {
+        return (int) ($this->articleRow($id)->catid ?? 0);
+    }
+
+    /** Ids des tags affectés à un article (getItem() les fournit via TagsHelper::getTagIds). */
+    private function tagIdsOf(object $item): array
+    {
+        $tags = $item->tags ?? null;
+        $csv  = \is_object($tags) ? (string) ($tags->tags ?? '') : (string) $tags;
+
+        return array_values(array_filter(array_map('intval', explode(',', $csv))));
+    }
+
+    /**
+     * Tags affectés (id + titre) d'un article, pour la lecture. TagsHelper::getTags()
+     * et non getItemTags() : ce dernier ne garde que les tags publiés et accessibles
+     * (logique d'affichage front), alors qu'un outil d'édition doit voir tout ce qui
+     * est affecté.
+     */
+    private function articleTags(object $item): array
+    {
+        $ids = $this->tagIdsOf($item);
+        $out = [];
+
+        foreach ($ids ? (new TagsHelper())->getTags($ids) : [] as $tid => $title) {
+            $out[] = ['id' => (int) $tid, 'title' => (string) $title];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Valide une liste d'ids de tags (TagsHelper::getTags : ne renvoie que les tags existants).
      *
      * @return array{applied: string[], ignored: int[]} applied = ids existants en
      *         chaînes (format attendu par le champ tags) ; ignored = ids inconnus.
@@ -370,12 +394,7 @@ final class ArticleTools
             return ['applied' => [], 'ignored' => []];
         }
 
-        $db    = $this->db();
-        $q     = $db->getQuery(true)
-            ->select($db->quoteName('id'))
-            ->from($db->quoteName('#__tags'))
-            ->whereIn($db->quoteName('id'), $ids);
-        $exist = array_map('intval', $db->setQuery($q)->loadColumn());
+        $exist = array_map('intval', array_keys((new TagsHelper())->getTags($ids)));
 
         return [
             'applied' => array_map('strval', $exist),
@@ -384,9 +403,9 @@ final class ArticleTools
     }
 
     /** Compte rendu tags pour la réponse : tags réellement affectés + ids ignorés. */
-    private function tagResult(int $id, array $ignored): array
+    private function tagResult(?object $item, array $ignored): array
     {
-        $result = ['assigned' => $this->articleTags($id)];
+        $result = ['assigned' => $item ? $this->articleTags($item) : []];
 
         if ($ignored) {
             $result['ignored'] = array_values($ignored);
@@ -397,37 +416,32 @@ final class ArticleTools
 
     /**
      * Injecte `url` (+ `urls` multilingue) pour un article, via le trait partagé
-     * {@see ResolvesPublicUrls}. Un article `language="*"` reçoit une URL par
-     * langue de contenu active.
+     * {@see ResolvesPublicUrls}. Lien interne bâti par RouteHelper::getArticleRoute()
+     * du cœur, SANS langue (le trait ajoute `&lang` par langue de contenu active pour
+     * un article `language="*"`).
      *
      * @param array<string,mixed> $result
      * @return array<string,mixed>
      */
-    private function withUrls(array $result, int $id): array
+    private function withUrls(array $result, ?object $item): array
     {
-        try {
-            $db  = $this->db();
-            $row = $db->setQuery(
-                $db->getQuery(true)
-                    ->select($db->quoteName(['id', 'alias', 'catid', 'language']))
-                    ->from($db->quoteName('#__content'))
-                    ->where($db->quoteName('id') . ' = :id')
-                    ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER)
-            )->loadObject();
-        } catch (\Throwable) {
-            $row = null;
-        }
-
-        if (!$row) {
+        if (!$item) {
             $result['url'] = '';
 
             return $result;
         }
 
-        $slug = $row->id . (($row->alias ?? '') !== '' ? ':' . $row->alias : '');
-        $base = 'index.php?option=com_content&view=article&id=' . $slug . '&catid=' . (int) $row->catid;
+        $slug     = $item->id . (((string) ($item->alias ?? '')) !== '' ? ':' . $item->alias : '');
+        $category = new CategoryTable($this->db());
+        $public   = $this->isPubliclyVisible(
+            (int) $item->state,
+            (int) $item->access,
+            $item->publish_up ?? null,
+            $item->publish_down ?? null,
+            $category->load((int) $item->catid) ? $category : null
+        );
 
-        return $this->withPublicUrls($result, $base, (string) $row->language);
+        return $this->withPublicUrls($result, RouteHelper::getArticleRoute($slug, (int) $item->catid), (string) $item->language, $public);
     }
 
     /**
@@ -504,48 +518,10 @@ final class ArticleTools
         return (array) $v;
     }
 
-    /** Valeur brute de #__content.urls (JSON décodé en tableau). */
-    private function rawUrls(int $id): array
+    /** Liens A/B/C tels que stockés (getItem() les fournit décodés). */
+    private function storedLinks(?object $item): array
     {
-        try {
-            $db  = $this->db();
-            $val = $db->setQuery(
-                $db->getQuery(true)
-                    ->select($db->quoteName('urls'))
-                    ->from($db->quoteName('#__content'))
-                    ->where($db->quoteName('id') . ' = ' . (int) $id)
-            )->loadResult();
-        } catch (\Throwable) {
-            $val = '';
-        }
-
-        return \is_string($val) ? (array) json_decode($val, true) : (array) $val;
-    }
-
-    /**
-     * Persiste les liens A/B/C dans #__content.urls par écriture directe ciblée.
-     *
-     * Le modèle Article de com_content vide la colonne `urls` lors d'un save
-     * PARTIEL (le filtrage de formulaire réinitialise le groupe `urls` aux
-     * valeurs par défaut) : on écrit donc `urls` séparément, APRÈS le save du
-     * modèle (qui, lui, préserve `urls` tant qu'on ne le lui passe pas). Fusionne
-     * avec l'existant en base. Retourne la structure décodée {a,b,c}.
-     */
-    private function persistLinks(int $id, array $links): array
-    {
-        $urls = $this->buildUrls($links, $this->rawUrls($id));
-        $json = json_encode($urls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->update($db->quoteName('#__content'))
-            ->set($db->quoteName('urls') . ' = :urls')
-            ->where($db->quoteName('id') . ' = :id')
-            ->bind(':urls', $json)
-            ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER);
-        $db->setQuery($q)->execute();
-
-        return $this->decodeLinks($urls);
+        return $this->decodeLinks($item ? ($item->urls ?? []) : []);
     }
 
     /**
@@ -710,28 +686,12 @@ final class ArticleTools
 
     private function userExists(int $id): bool
     {
-        $db = $this->db();
-
-        return (bool) $db->setQuery(
-            $db->getQuery(true)
-                ->select('COUNT(*)')
-                ->from($db->quoteName('#__users'))
-                ->where($db->quoteName('id') . ' = :id')
-                ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER)
-        )->loadResult();
+        return $id > 0 && (int) Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById($id)->id === $id;
     }
 
     private function accessLevelExists(int $id): bool
     {
-        $db = $this->db();
-
-        return (bool) $db->setQuery(
-            $db->getQuery(true)
-                ->select('COUNT(*)')
-                ->from($db->quoteName('#__viewlevels'))
-                ->where($db->quoteName('id') . ' = :id')
-                ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER)
-        )->loadResult();
+        return $id > 0 && (new ViewLevel($this->db()))->load($id);
     }
 
     /**
@@ -822,46 +782,22 @@ final class ArticleTools
         $data['featured_down'] = \array_key_exists('featured_down', $a) ? $this->sqlDate($a['featured_down'], 'featured_down') : ($current['featured_down'] ?? null);
     }
 
-    /** Dates de mise en avant (#__content_frontpage) d'un article, ou null/null. */
-    private function featuredDates(int $id): array
-    {
-        try {
-            $db  = $this->db();
-            $row = $db->setQuery(
-                $db->getQuery(true)
-                    ->select($db->quoteName(['featured_up', 'featured_down']))
-                    ->from($db->quoteName('#__content_frontpage'))
-                    ->where($db->quoteName('content_id') . ' = :id')
-                    ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER)
-            )->loadAssoc();
-        } catch (\Throwable) {
-            $row = null;
-        }
 
-        return $row ?: ['featured_up' => null, 'featured_down' => null];
-    }
-
-    /** Noms d'utilisateurs (id → name) pour created_by / modified_by. */
+    /** Noms d'utilisateurs (id → name) pour created_by / modified_by (UserFactory du cœur). */
     private function userNames(array $ids): array
     {
-        $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+        $factory = Factory::getContainer()->get(UserFactoryInterface::class);
+        $out     = [];
 
-        if (!$ids) {
-            return [];
+        foreach (array_unique(array_filter(array_map('intval', $ids))) as $uid) {
+            $user = $factory->loadUserById($uid);
+
+            if ((int) $user->id === $uid) {
+                $out[$uid] = (string) $user->name;
+            }
         }
 
-        try {
-            $db = $this->db();
-
-            return $db->setQuery(
-                $db->getQuery(true)
-                    ->select($db->quoteName(['id', 'name']))
-                    ->from($db->quoteName('#__users'))
-                    ->whereIn($db->quoteName('id'), $ids)
-            )->loadAssocList('id', 'name');
-        } catch (\Throwable) {
-            return [];
-        }
+        return $out;
     }
 
     /** Fragment de description commun aux arguments de date. */
@@ -925,36 +861,18 @@ final class ArticleTools
         }
     }
 
-    /** Dates stockées (UTC) + featured d'un article, pour les retourner après un save. */
-    private function storedDates(int $id): array
+    /** Dates stockées (UTC) + featured d'un article (lues sur getItem()), pour les retourner après un save. */
+    private function storedDates(?object $item): array
     {
-        try {
-            $db  = $this->db();
-            $row = $db->setQuery(
-                $db->getQuery(true)
-                    ->select($db->quoteName(['created', 'modified', 'publish_up', 'publish_down', 'featured']))
-                    ->from($db->quoteName('#__content'))
-                    ->where($db->quoteName('id') . ' = :id')
-                    ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER)
-            )->loadAssoc();
-        } catch (\Throwable) {
-            $row = null;
-        }
-
-        $row = $row ?: ['created' => null, 'modified' => null, 'publish_up' => null, 'publish_down' => null, 'featured' => 0];
-        $row['featured'] = (int) $row['featured'];
-
-        return $row + $this->featuredDates($id);
-    }
-
-    /**
-     * Instancie le modèle Administrator « Article » de com_content.
-     */
-    private function articleModel()
-    {
-        $factory = Factory::getApplication()->bootComponent('com_content')->getMVCFactory();
-
-        return $factory->createModel('Article', 'Administrator', ['ignore_request' => true]);
+        return [
+            'created'       => $item->created ?? null,
+            'modified'      => $item->modified ?? null,
+            'publish_up'    => $item->publish_up ?? null,
+            'publish_down'  => $item->publish_down ?? null,
+            'featured'      => (int) ($item->featured ?? 0),
+            'featured_up'   => $item->featured_up ?? null,
+            'featured_down' => $item->featured_down ?? null,
+        ];
     }
 
     /**
@@ -979,15 +897,7 @@ final class ArticleTools
     /** created_by d'un article (0 si inconnu), pour la règle core.edit.own. */
     private function createdBy(int $id): int
     {
-        $db = $this->db();
-
-        return (int) $db->setQuery(
-            $db->getQuery(true)
-                ->select($db->quoteName('created_by'))
-                ->from($db->quoteName('#__content'))
-                ->where($db->quoteName('id') . ' = :id')
-                ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER)
-        )->loadResult();
+        return (int) ($this->articleRow($id)->created_by ?? 0);
     }
 
     /** Déplacer vers une autre catégorie exige core.create sur la cible (comme le batch « move » du cœur). */
@@ -999,35 +909,21 @@ final class ArticleTools
     }
 
     /**
-     * Restreint une requête #__content aux articles visibles par l'utilisateur du
-     * jeton : niveaux d'accès (view levels) autorisés, et état publié seulement
-     * sauf s'il peut éditer le contenu. §5 audit ACL (anti-fuite brouillons/corbeille).
-     *
-     * Un auteur qui n'a que core.edit.own voit aussi ses propres articles non publiés
-     * (cohérent avec update_article, qui l'autorise déjà à les modifier) ; jamais ceux
-     * des autres. $stateFilter = false laisse le contrôle d'état à l'appelant
-     * (get_article fait un contrôle précis au niveau de l'asset de l'article).
+     * Niveaux d'accès : l'article ET sa catégorie doivent être dans les niveaux de
+     * l'utilisateur du jeton (mêmes contrôles que le modèle Articles du back-office,
+     * utilisé par search_articles). §5 audit ACL.
      */
-    private function applyReadAcl($db, $q, bool $stateFilter = true): void
+    private function canViewAccess(object $item): bool
     {
-        $levels = $this->user->getAuthorisedViewLevels() ?: [1];
-        $q->whereIn($db->quoteName('access'), array_map('intval', $levels));
+        $levels = array_map('intval', $this->user->getAuthorisedViewLevels() ?: [1]);
 
-        if (!$stateFilter
-            || $this->user->authorise('core.edit', 'com_content')
-            || $this->user->authorise('core.edit.state', 'com_content')) {
-            return;
+        if (!\in_array((int) $item->access, $levels, true)) {
+            return false;
         }
 
-        $uid = (int) $this->user->id;
+        $category = new CategoryTable($this->db());
 
-        if ($uid > 0 && $this->user->authorise('core.edit.own', 'com_content')) {
-            $q->where('(' . $db->quoteName('state') . ' = 1 OR ' . $db->quoteName('created_by') . ' = ' . $uid . ')');
-
-            return;
-        }
-
-        $q->where($db->quoteName('state') . ' = 1');
+        return !$category->load((int) $item->catid) || \in_array((int) $category->access, $levels, true);
     }
 
     /**
@@ -1054,21 +950,106 @@ final class ArticleTools
         $column  = $columns[strtolower((string) ($a['order'] ?? 'created'))] ?? 'created';
         $dir     = strtolower((string) ($a['direction'] ?? 'desc')) === 'asc' ? 'ASC' : 'DESC';
 
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['id', 'title', 'alias', 'catid', 'state', 'featured', 'access', 'language', 'created', 'modified', 'publish_up', 'publish_down']))
-            ->from($db->quoteName('#__content'))
-            ->order($db->quoteName($column) . ' ' . $dir);
+        // Modèle Administrator « Articles » (celui de la liste du back-office, J5/J6) :
+        // recherche (titre, alias, note, préfixes id:/author:/content:), tri, total, et
+        // niveaux d'accès de l'article ET de sa catégorie.
+        $canEdit = $this->user->authorise('core.edit', 'com_content') || $this->user->authorise('core.edit.state', 'com_content');
+        $uid     = (int) $this->user->id;
 
-        if ($query !== '') {
-            $q->where($db->quoteName('title') . ' LIKE :search')
-                ->bind(':search', $search, \Joomla\Database\ParameterType::STRING);
-            $search = '%' . $query . '%';
+        if ($canEdit || $uid <= 0 || !$this->user->authorise('core.edit.own', 'com_content')) {
+            // Éditeur : tous les états ; sinon : publiés seulement.
+            [$items, $total] = $this->queryArticles($query, $canEdit ? '*' : '1', null, $column, $dir, $offset, $limit);
+        } else {
+            // Auteur « edit.own » seul : publiés OU les siens. Les filtres du modèle se
+            // cumulent (ET) : on interroge deux ensembles disjoints — publiés des autres,
+            // puis tous les siens — et on fusionne selon le tri demandé.
+            [$others, $t1] = $this->queryArticles($query, '1', [$uid, false], $column, $dir, 0, $offset + $limit);
+            [$mine, $t2]   = $this->queryArticles($query, '*', [$uid, true], $column, $dir, 0, $offset + $limit);
+            $items         = $this->mergeSorted($others, $mine, $column, $dir === 'ASC');
+            $items         = \array_slice($items, $offset, $limit);
+            $total         = $t1 + $t2;
         }
 
-        $this->applyReadAcl($db, $q);
+        return Pagination::fromPage($items, $total, $offset, $limit, 'articles');
+    }
 
-        return Pagination::envelope($db, $q, $offset, $limit, 'articles');
+    /**
+     * Une page du modèle Articles, réduite aux colonnes exposées par l'outil.
+     *
+     * @param string          $published '1' ou '*' (tous états)
+     * @param array{0:int,1:bool}|null $author [user id, true = seulement lui / false = sauf lui]
+     *
+     * @return array{0: list<array<string,mixed>>, 1: int} lignes, total
+     */
+    private function queryArticles(string $search, string $published, ?array $author, string $column, string $dir, int $start, int $limit): array
+    {
+        $model = Factory::getApplication()->bootComponent('com_content')
+            ->getMVCFactory()->createModel('Articles', 'Administrator', ['ignore_request' => true]);
+
+        $model->setState('filter.search', $search);
+        $model->setState('filter.published', $published);
+
+        if ($author !== null) {
+            $model->setState('filter.author_id', $author[0]);
+            $model->setState('filter.author_id.include', $author[1]);
+        }
+
+        $model->setState('list.ordering', 'a.' . $column);
+        $model->setState('list.direction', $dir);
+        $model->setState('list.start', $start);
+        $model->setState('list.limit', $limit);
+
+        $rows = [];
+
+        foreach ((array) $model->getItems() as $item) {
+            $rows[] = [
+                'id'           => (int) $item->id,
+                'title'        => (string) $item->title,
+                'alias'        => (string) $item->alias,
+                'catid'        => (int) $item->catid,
+                'state'        => (int) $item->state,
+                'featured'     => (int) $item->featured,
+                'access'       => (int) $item->access,
+                'language'     => (string) $item->language,
+                'created'      => $item->created,
+                'modified'     => $item->modified,
+                'publish_up'   => $item->publish_up,
+                'publish_down' => $item->publish_down,
+            ];
+        }
+
+        return [$rows, (int) $model->getTotal()];
+    }
+
+    /**
+     * Fusionne deux listes déjà triées par la même colonne (départage par id).
+     * NULL en premier en ASC, en dernier en DESC, comme MySQL.
+     */
+    private function mergeSorted(array $a, array $b, string $column, bool $asc): array
+    {
+        $all = array_merge($a, $b);
+
+        usort($all, static function (array $x, array $y) use ($column, $asc): int {
+            $vx = $x[$column];
+            $vy = $y[$column];
+
+            if ($vx === null || $vy === null) {
+                $cmp = ($vx === null) <=> ($vy === null);
+                $cmp = -$cmp; // NULL < valeur
+            } elseif ($column === 'id') {
+                $cmp = $vx <=> $vy;
+            } elseif ($column === 'title') {
+                $cmp = strcmp(mb_strtolower((string) $vx), mb_strtolower((string) $vy));
+            } else {
+                $cmp = strcmp((string) $vx, (string) $vy);
+            }
+
+            $cmp = $cmp ?: ($x['id'] <=> $y['id']);
+
+            return $asc ? $cmp : -$cmp;
+        });
+
+        return $all;
     }
 
     private function getArticle(int $id): array
@@ -1077,28 +1058,24 @@ final class ArticleTools
             throw new McpToolException("The 'id' parameter is required.");
         }
 
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName([
-                'id', 'title', 'alias', 'catid', 'state', 'featured', 'access', 'language', 'introtext', 'fulltext',
-                'metadesc', 'metakey', 'metadata', 'attribs', 'images', 'urls', 'note',
-                'created', 'created_by', 'created_by_alias', 'modified', 'modified_by', 'publish_up', 'publish_down',
-                'hits', 'ordering', 'version', 'checked_out', 'checked_out_time',
-            ]))
-            ->from($db->quoteName('#__content'))
-            ->where($db->quoteName('id') . ' = :id')
-            ->bind(':id', $id, \Joomla\Database\ParameterType::INTEGER);
-        $this->applyReadAcl($db, $q, false);
+        $item = $this->loadArticle($id);
 
-        $row = $db->setQuery($q)->loadAssoc();
-
-        // Même réponse « introuvable » pour un article non publié non lisible : ne révèle pas son existence.
-        if ($row && (int) $row['state'] !== 1 && !$this->canReadUnpublished((int) $row['id'], (int) $row['created_by'])) {
-            $row = null;
+        // Même réponse « introuvable » si l'accès (article ou catégorie) manque, ou pour un article
+        // non publié non lisible : ne révèle pas son existence.
+        if (!$item || !$this->canViewAccess($item)
+            || ((int) $item->state !== 1 && !$this->canReadUnpublished((int) $item->id, (int) $item->created_by))) {
+            throw new McpToolException('Article not found: ' . $id);
         }
 
-        if (!$row) {
-            throw new McpToolException('Article not found: ' . $id);
+        $row = [];
+
+        foreach ([
+            'id', 'title', 'alias', 'catid', 'state', 'featured', 'access', 'language', 'introtext', 'fulltext',
+            'metadesc', 'metakey', 'note',
+            'created', 'created_by', 'created_by_alias', 'modified', 'modified_by', 'publish_up', 'publish_down',
+            'hits', 'ordering', 'version', 'checked_out', 'checked_out_time',
+        ] as $k) {
+            $row[$k] = $item->{$k} ?? null;
         }
 
         foreach (['id', 'catid', 'state', 'featured', 'access', 'created_by', 'modified_by', 'hits', 'ordering', 'version', 'checked_out'] as $int) {
@@ -1108,15 +1085,17 @@ final class ArticleTools
         $names                   = $this->userNames([$row['created_by'], $row['modified_by']]);
         $row['created_by_name']  = (string) ($names[$row['created_by']] ?? '');
         $row['modified_by_name'] = (string) ($names[$row['modified_by']] ?? '');
-        $row['images']   = json_decode((string) ($row['images'] ?? ''), true) ?: new \stdClass();
-        $row['metadata'] = json_decode((string) ($row['metadata'] ?? ''), true) ?: new \stdClass();
-        $row['attribs']  = json_decode((string) ($row['attribs'] ?? ''), true) ?: new \stdClass();
-        $row['links']    = $this->decodeLinks($row['urls'] ?? '');
-        unset($row['urls']);
-        $row          += $this->featuredDates($id);
-        $row           = $this->withUrls($row, $id);
-        $row['fields'] = $this->fields()->valuesFor($id, (int) $row['catid']);
-        $row['tags']   = $this->articleTags($id);
+
+        // getItem() renvoie images / metadata / attribs / urls déjà décodés (Registry::toArray).
+        $row['images']        = $this->toArray($item->images ?? []) ?: new \stdClass();
+        $row['metadata']      = $this->toArray($item->metadata ?? []) ?: new \stdClass();
+        $row['attribs']       = $this->toArray($item->attribs ?? []) ?: new \stdClass();
+        $row['links']         = $this->decodeLinks($item->urls ?? []);
+        $row['featured_up']   = $item->featured_up ?? null;
+        $row['featured_down'] = $item->featured_down ?? null;
+        $row                  = $this->withUrls($row, $item);
+        $row['fields']        = $this->fields()->valuesFor($id, (int) $row['catid']);
+        $row['tags']          = $this->articleTags($item);
 
         return $row;
     }
@@ -1176,6 +1155,14 @@ final class ArticleTools
             'urls'        => [],
         ];
 
+        // Liens A/B/C : passés au modèle avec le reste (événements, historique, punycode).
+        $urls = null;
+
+        if (\array_key_exists('links', $a)) {
+            $urls         = $this->buildUrls($this->normalizeLinksArg($a['links']), []);
+            $data['urls'] = $urls;
+        }
+
         // Dates : non fournies → la table pose created=now et le modèle
         // publish_up=now si l'article est publié.
         $this->applyDateArgs($a, $data);
@@ -1200,19 +1187,21 @@ final class ArticleTools
         $data    = $gate['data'];
         $ignored = $gate['ignored'];
 
-        if (!$model->save($data)) {
+        if (!$this->saveWithPostedUrls($model, $data, $urls)) {
             throw new McpToolException('Create failed: ' . $this->modelErrors($model));
         }
 
         $id = (int) $model->getState('article.id');
 
+        // Une seule relecture (getItem) pour les dates, l'URL, les liens et les tags.
+        $item   = $this->loadArticle($id);
         $result = $this->withUrls([
             'ok'    => true,
             'id'    => $id,
             'title' => $title,
             'catid' => $catid,
             'state' => (int) ($data['state'] ?? 0),
-        ] + $this->storedDates($id), $id);
+        ] + $this->storedDates($item), $item);
 
         if ($ignored) {
             $result['ignored'] = $ignored;
@@ -1222,12 +1211,12 @@ final class ArticleTools
             $result['fields'] = $this->fields()->setValues($id, $catid, $a['fields']);
         }
 
-        if (\array_key_exists('links', $a)) {
-            $result['links'] = $this->persistLinks($id, $this->normalizeLinksArg($a['links']));
+        if ($urls !== null) {
+            $result['links'] = $this->storedLinks($item);
         }
 
         if ($tagInfo !== null) {
-            $result['tags'] = $this->tagResult($id, $tagInfo['ignored']);
+            $result['tags'] = $this->tagResult($item, $tagInfo['ignored']);
         }
 
         return $result;
@@ -1276,6 +1265,14 @@ final class ArticleTools
             $data['images'] = $this->buildImages($a, $this->toArray($current->images ?? []));
         }
 
+        // Liens A/B/C : fusionnés avec ceux de getItem() (déjà décodés) et sauvés par le modèle.
+        $urls = null;
+
+        if (\array_key_exists('links', $a)) {
+            $urls         = $this->buildUrls($this->normalizeLinksArg($a['links']), $this->toArray($current->urls ?? []));
+            $data['urls'] = $urls;
+        }
+
         // Dates : seules celles fournies changent (bind partiel → les autres
         // colonnes gardent leur valeur en base).
         $this->applyDateArgs($a, $data);
@@ -1300,7 +1297,7 @@ final class ArticleTools
             $tagInfo      = $this->resolveTags((array) $a['tags']);
             $data['tags'] = $tagInfo['applied'];
         } else {
-            $data['tags'] = array_map('strval', $this->currentTagIds($id));
+            $data['tags'] = array_map('strval', $this->tagIdsOf($current));
         }
 
         $this->assertCanMoveTo((int) $data['catid'], (int) $current->catid);
@@ -1320,11 +1317,12 @@ final class ArticleTools
         $data    = $gate['data'];
         $ignored = $gate['ignored'];
 
-        if (!$model->save($data)) {
+        if (!$this->saveWithPostedUrls($model, $data, $urls)) {
             throw new McpToolException('Update failed: ' . $this->modelErrors($model));
         }
 
-        $result = $this->withUrls(['ok' => true, 'id' => $id, 'state' => (int) ($data['state'] ?? $current->state)] + $this->storedDates($id), $id);
+        $item   = $this->loadArticle($id);
+        $result = $this->withUrls(['ok' => true, 'id' => $id, 'state' => (int) ($data['state'] ?? $current->state)] + $this->storedDates($item), $item);
 
         if ($ignored) {
             $result['ignored'] = $ignored;
@@ -1334,12 +1332,12 @@ final class ArticleTools
             $result['fields'] = $this->fields()->setValues($id, (int) $data['catid'], $a['fields']);
         }
 
-        if (\array_key_exists('links', $a)) {
-            $result['links'] = $this->persistLinks($id, $this->normalizeLinksArg($a['links']));
+        if ($urls !== null) {
+            $result['links'] = $this->storedLinks($item);
         }
 
         if ($tagInfo !== null) {
-            $result['tags'] = $this->tagResult($id, $tagInfo['ignored']);
+            $result['tags'] = $this->tagResult($item, $tagInfo['ignored']);
         }
 
         return $result;
@@ -1503,6 +1501,10 @@ final class ArticleTools
             throw new McpToolException('Article not found: ' . $id);
         }
 
+        // EXCEPTION SQL assumée : l'ordre complet de la catégorie, indépendamment des droits de
+        // lecture. Le modèle Articles masquerait les articles hors des niveaux d'accès de
+        // l'utilisateur ; les renuméroter sans eux créerait des collisions d'ordering.
+        // L'écriture, elle, passe par saveorder().
         $db       = $this->db();
         $siblings = array_map('intval', $db->setQuery(
             $db->getQuery(true)
@@ -1513,18 +1515,41 @@ final class ArticleTools
                 ->order($db->quoteName('ordering') . ' ASC, ' . $db->quoteName('id') . ' ASC')
         )->loadColumn());
 
-        $order = Ordering::apply(
-            $db,
-            '#__content',
-            'id',
-            'ordering',
+        $order = Ordering::compute(
             $siblings,
             $id,
             isset($a['before_id']) ? (int) $a['before_id'] : null,
             isset($a['after_id']) ? (int) $a['after_id'] : null
         );
 
+        $this->saveOrder($this->articleModel(), $order);
+
         return ['ok' => true, 'id' => $id, 'catid' => $catid, 'order' => $order];
+    }
+
+    /**
+     * Persiste un ordre via AdminModel::saveorder() (identique J5/J6) : ACL
+     * core.edit.state par élément, store() de la table, reorder() selon les
+     * conditions du modèle (catégorie, contexte…) et vidage du cache.
+     * saveorder() écarte en silence les éléments non autorisés : on le signale.
+     *
+     * @param int[] $order ids dans le nouvel ordre
+     */
+    private function saveOrder($model, array $order): void
+    {
+        $pks = $order;
+
+        if (!$model->saveorder($pks, range(1, \count($order)))) {
+            throw new McpToolException('Reorder failed: ' . $this->modelErrors($model));
+        }
+
+        $denied = array_values(array_diff($order, array_map('intval', $pks)));
+
+        if ($denied) {
+            throw new McpToolException(
+                'Reorder incomplete: core.edit.state is denied on item(s) ' . implode(', ', $denied) . '.'
+            );
+        }
     }
 
     private function reorderField(array $a): array
@@ -1535,18 +1560,19 @@ final class ArticleTools
             throw new McpToolException("The 'id' parameter is required.");
         }
 
-        $db  = $this->db();
-        $row = $db->setQuery(
-            $db->getQuery(true)
-                ->select($db->quoteName(['context', 'group_id']))
-                ->from($db->quoteName('#__fields'))
-                ->where($db->quoteName('id') . ' = ' . $id)
-        )->loadAssoc();
+        $model = Factory::getApplication()->bootComponent('com_fields')
+            ->getMVCFactory()->createModel('Field', 'Administrator', ['ignore_request' => true]);
+        $table = $model->getTable();
 
-        if (!$row) {
+        if (!$table->load($id)) {
             throw new McpToolException('Field not found: ' . $id);
         }
 
+        $row = ['context' => (string) $table->context, 'group_id' => (int) $table->group_id];
+        $db  = $this->db();
+
+        // EXCEPTION SQL assumée (même raison que reorder_article) : liste complète des champs
+        // du groupe ; l'écriture passe par saveorder().
         $siblings = array_map('intval', $db->setQuery(
             $db->getQuery(true)
                 ->select($db->quoteName('id'))
@@ -1557,33 +1583,15 @@ final class ArticleTools
                 ->order($db->quoteName('ordering') . ' ASC, ' . $db->quoteName('id') . ' ASC')
         )->loadColumn());
 
-        $order = Ordering::apply(
-            $db,
-            '#__fields',
-            'id',
-            'ordering',
+        $order = Ordering::compute(
             $siblings,
             $id,
             isset($a['before_id']) ? (int) $a['before_id'] : null,
             isset($a['after_id']) ? (int) $a['after_id'] : null
         );
 
+        $this->saveOrder($model, $order);
+
         return ['ok' => true, 'id' => $id, 'context' => (string) $row['context'], 'order' => $order];
-    }
-
-    private function modelErrors($model): string
-    {
-        $errors = method_exists($model, 'getErrors') ? $model->getErrors() : [];
-
-        if (!$errors && method_exists($model, 'getError')) {
-            $errors = [$model->getError()];
-        }
-
-        $errors = array_filter(array_map(
-            static fn ($e) => $e instanceof \Throwable ? $e->getMessage() : (string) $e,
-            $errors
-        ));
-
-        return $errors ? implode(' | ', $errors) : 'unknown error';
     }
 }

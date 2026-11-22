@@ -18,6 +18,7 @@
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Installer\InstallerAdapter;
+use Joomla\CMS\Table\Extension;
 use Joomla\Database\DatabaseInterface;
 
 class PlgTaskSensomcpInstallerScript
@@ -61,28 +62,36 @@ class PlgTaskSensomcpInstallerScript
     /** Active le plugin task/sensomcp (installé désactivé par défaut). */
     private function enableSelf(DatabaseInterface $db): void
     {
-        $q = $db->getQuery(true)
-            ->update($db->quoteName('#__extensions'))
-            ->set($db->quoteName('enabled') . ' = 1')
-            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-            ->where($db->quoteName('folder') . ' = ' . $db->quote('task'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('sensomcp'));
+        // Table « Extension » du cœur (J5/J6), comme l'installeur : sans ACL (installation CLI).
+        $table = new Extension($db);
 
-        $db->setQuery($q)->execute();
+        if ($table->load(['type' => 'plugin', 'folder' => 'task', 'element' => 'sensomcp'])) {
+            $table->enabled = 1;
+            $table->store();
+        }
 
         // Prise en compte immédiate (le cache com_plugins masque sinon le plugin).
         Factory::getCache('com_plugins')->clean();
     }
 
-    /** Crée la tâche planifiée si aucune du type n'existe. @return bool créée ? */
+    /**
+     * Crée la tâche planifiée si aucune du type n'existe. Table « Task » de com_scheduler (J5/J6) :
+     * encode les règles en JSON et crée l'asset de la tâche (permissions), ce que l'ancien INSERT
+     * direct ne faisait pas (asset_id = 0). Pas de TaskModel : il exige un utilisateur autorisé,
+     * absent en installation CLI.
+     *
+     * @return bool créée ?
+     */
     private function ensureTask(DatabaseInterface $db): bool
     {
-        $q = $db->getQuery(true)
-            ->select('COUNT(*)')
-            ->from($db->quoteName('#__scheduler_tasks'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote(self::TASK_TYPE));
+        $table = Factory::getApplication()->bootComponent('com_scheduler')
+            ->getMVCFactory()->createTable('Task', 'Administrator');
 
-        if ((int) $db->setQuery($q)->loadResult() > 0) {
+        if (!$table) {
+            throw new \RuntimeException('com_scheduler task table unavailable');
+        }
+
+        if ($table->load(['type' => self::TASK_TYPE])) {
             return false;
         }
 
@@ -94,39 +103,32 @@ class PlgTaskSensomcpInstallerScript
             $next->modify('+1 day');
         }
 
-        $columns = [
-            'asset_id', 'title', 'type', 'execution_rules', 'cron_rules', 'state', 'last_exit_code',
-            'next_execution', 'times_executed', 'times_failed', 'locked', 'priority', 'ordering',
-            'cli_exclusive', 'params', 'note', 'created', 'created_by',
-        ];
+        $table->reset();
+        $table->id = null;
 
-        $values = implode(',', [
-            0,
-            $db->quote('Senso MCP maintenance'),
-            $db->quote(self::TASK_TYPE),
-            $db->quote(json_encode(['rule-type' => 'interval-days', 'interval-days' => 1, 'exec-time' => '03:30', 'exec-day' => '01'])),
-            $db->quote(json_encode(['type' => 'interval', 'exp' => 'P1D'])),
-            1,
-            0,
-            $db->quote($next->format('Y-m-d H:i:s')),
-            0,
-            0,
-            'NULL',
-            0,
-            0,
-            0,
-            $db->quote(json_encode(['log_retention_days' => 30])),
-            $db->quote(''),
-            $db->quote($now->format('Y-m-d H:i:s')),
-            0,
-        ]);
+        $ok = $table->bind([
+            'title'           => 'Senso MCP maintenance',
+            'type'            => self::TASK_TYPE,
+            'execution_rules' => ['rule-type' => 'interval-days', 'interval-days' => 1, 'exec-time' => '03:30', 'exec-day' => '01'],
+            'cron_rules'      => ['type' => 'interval', 'exp' => 'P1D'],
+            'state'           => 1,
+            'last_exit_code'  => 0,
+            'next_execution'  => $next->format('Y-m-d H:i:s'),
+            'times_executed'  => 0,
+            'times_failed'    => 0,
+            'locked'          => null,
+            'priority'        => 0,
+            'ordering'        => 0,
+            'cli_exclusive'   => 0,
+            'params'          => ['log_retention_days' => 30],
+            'note'            => '',
+            'created'         => $now->format('Y-m-d H:i:s'),
+            'created_by'      => 0,
+        ]) && $table->check() && $table->store();
 
-        $q = $db->getQuery(true)
-            ->insert($db->quoteName('#__scheduler_tasks'))
-            ->columns($db->quoteName($columns))
-            ->values($values);
-
-        $db->setQuery($q)->execute();
+        if (!$ok) {
+            throw new \RuntimeException('task not created: ' . $table->getError());
+        }
 
         return true;
     }

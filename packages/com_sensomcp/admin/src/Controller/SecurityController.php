@@ -12,6 +12,7 @@ use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\Router\Route;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\ComponentParams;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\CatalogState;
 
 \defined('_JEXEC') or die;
@@ -205,32 +206,10 @@ class SecurityController extends BaseController
         return Factory::getContainer()->get(DatabaseInterface::class);
     }
 
-    /** Fusionne des changements dans les params du composant (une lecture, une écriture). */
+    /** Fusionne des changements dans les params du composant (table « Extension » du cœur). */
     private function setComponentParams(array $changes): void
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName('params'))
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'));
-
-        $params = json_decode((string) $db->setQuery($q)->loadResult(), true) ?: [];
-
-        foreach ($changes as $key => $value) {
-            $params[$key] = $value;
-        }
-
-        $json = json_encode($params);
-
-        $u = $db->getQuery(true)
-            ->update($db->quoteName('#__extensions'))
-            ->set($db->quoteName('params') . ' = :params')
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'))
-            ->bind(':params', $json, ParameterType::STRING);
-
-        $db->setQuery($u)->execute();
+        ComponentParams::set($changes);
     }
 
     /** Purge les caches impactés (params, plugins, modules). */

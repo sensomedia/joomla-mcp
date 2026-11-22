@@ -14,7 +14,7 @@ use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\ExtensionRecords;
 use Sensomedia\Component\Sensomcp\Administrator\Helper\PluginRow;
 use Sensomedia\Component\Sensomcp\Administrator\Helper\UpdateSitesHelper;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolState;
@@ -147,13 +147,7 @@ class PluginsController extends BaseController
 
         // Auto-activation du plugin fraîchement installé.
         if ($ok) {
-            $db = $this->db();
-            $id = (int) $db->setQuery(
-                $db->getQuery(true)->select($db->quoteName('extension_id'))->from($db->quoteName('#__extensions'))
-                    ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                    ->where($db->quoteName('folder') . ' = ' . $db->quote('sensomcp'))
-                    ->where($db->quoteName('element') . ' = ' . $db->quote($element))
-            )->loadResult();
+            $id = (int) (ExtensionRecords::plugin('sensomcp', $element)->extension_id ?? 0);
 
             if ($id > 0) {
                 $this->setPluginEnabled($id, true);
@@ -187,12 +181,7 @@ class PluginsController extends BaseController
         }
 
         $db = $this->db();
-        $id = (int) $db->setQuery(
-            $db->getQuery(true)->select($db->quoteName('extension_id'))->from($db->quoteName('#__extensions'))
-                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                ->where($db->quoteName('folder') . ' = ' . $db->quote('sensomcp'))
-                ->where($db->quoteName('element') . ' = ' . $db->quote($element))
-        )->loadResult();
+        $id = (int) (ExtensionRecords::plugin('sensomcp', $element)->extension_id ?? 0);
 
         if ($id <= 0) {
             $this->ajaxOut(false, Text::_('COM_SENSOMCP_CATALOG_INSTALL_UNKNOWN'));
@@ -264,34 +253,22 @@ class PluginsController extends BaseController
         return Factory::getContainer()->get(DatabaseInterface::class);
     }
 
-    /** L'extension est-elle un plugin du dossier sensomcp ? */
+    /** L'extension est-elle un plugin du dossier sensomcp ? (table « Extension » du cœur) */
     private function isSensomcpPlugin(int $extensionId): bool
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select('COUNT(*)')
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('extension_id') . ' = :id')
-            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-            ->where($db->quoteName('folder') . ' = ' . $db->quote('sensomcp'))
-            ->bind(':id', $extensionId, ParameterType::INTEGER);
+        $row = ExtensionRecords::byId($extensionId);
 
-        return (int) $db->setQuery($q)->loadResult() > 0;
+        return $row !== null && (string) $row->type === 'plugin' && (string) $row->folder === 'sensomcp';
     }
 
+    /**
+     * Bascule un plugin Senso MCP par la table « Extension » du cœur, comme l'installeur. Pas de
+     * modèle Plugin de com_plugins : cet écran n'exige que core.admin sur Senso MCP (ajaxGuard), le
+     * modèle imposerait en plus core.edit.state sur com_plugins.
+     */
     private function setPluginEnabled(int $extensionId, bool $enabled): void
     {
-        $db = $this->db();
-        $en = $enabled ? 1 : 0;
-
-        $q = $db->getQuery(true)
-            ->update($db->quoteName('#__extensions'))
-            ->set($db->quoteName('enabled') . ' = :en')
-            ->where($db->quoteName('extension_id') . ' = :id')
-            ->bind(':en', $en, ParameterType::INTEGER)
-            ->bind(':id', $extensionId, ParameterType::INTEGER);
-
-        $db->setQuery($q)->execute();
+        ExtensionRecords::setEnabled($extensionId, $enabled);
     }
 
     /** Enregistre l'autoloader PSR-4 d'un plugin sensomcp (classe utilisable de suite). */

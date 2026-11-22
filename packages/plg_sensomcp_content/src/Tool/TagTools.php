@@ -8,8 +8,7 @@ namespace Sensomedia\Plugin\Sensomcp\Content\Tool;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Form;
-use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
+use Joomla\Component\Tags\Site\Helper\RouteHelper as TagsRouteHelper;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ActionLogContext;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
@@ -124,11 +123,6 @@ final class TagTools
 
     // ---------------------------------------------------------------------
 
-    private function db(): DatabaseInterface
-    {
-        return Factory::getContainer()->get(DatabaseInterface::class);
-    }
-
     private function model()
     {
         return Factory::getApplication()->bootComponent('com_tags')
@@ -148,23 +142,48 @@ final class TagTools
         return $form;
     }
 
+    /**
+     * Tags publiés via le modèle Administrator « Tags » (liste du back-office, J5/J6) :
+     * recherche (titre, alias, note, préfixe id:), ordre de l'arbre, racine exclue,
+     * niveaux d'accès de l'utilisateur du jeton.
+     */
     private function listTags(string $query): array
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['id', 'title', 'level', 'path', 'language']))
-            ->from($db->quoteName('#__tags'))
-            ->where($db->quoteName('published') . ' = 1')
-            ->where($db->quoteName('id') . ' > 1')
-            ->order($db->quoteName('lft') . ' ASC');
+        $model = Factory::getApplication()->bootComponent('com_tags')
+            ->getMVCFactory()->createModel('Tags', 'Administrator', ['ignore_request' => true]);
 
-        if ($query !== '') {
-            $q->where($db->quoteName('title') . ' LIKE :search')
-                ->bind(':search', $search, ParameterType::STRING);
-            $search = '%' . $query . '%';
+        $model->setState('filter.search', $query);
+        $model->setState('filter.published', '1');
+        $model->setState('list.ordering', 'a.lft');
+        $model->setState('list.direction', 'ASC');
+        $model->setState('list.start', 0);
+        $model->setState('list.limit', 200);
+
+        $out = [];
+
+        foreach ((array) $model->getItems() as $t) {
+            $out[] = [
+                'id'       => (int) $t->id,
+                'title'    => (string) $t->title,
+                'level'    => (int) $t->level,
+                'path'     => (string) $t->path,
+                'language' => (string) $t->language,
+            ];
         }
 
-        return ['tags' => $db->setQuery($q, 0, 200)->loadAssocList()];
+        return ['tags' => $out];
+    }
+
+    /** Tag via TagModel::getItem() (null si absent). */
+    private function loadTag(int $id): ?object
+    {
+        if ($id <= 0) {
+            return null;
+        }
+
+        $item = $this->model()->getItem($id);
+
+        return ($item && !empty($item->id)) ? $item : null;
     }
 
     private function getTag(int $id): array
@@ -173,54 +192,46 @@ final class TagTools
             throw new McpToolException("The 'id' parameter is required.");
         }
 
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['id', 'title', 'alias', 'parent_id', 'level', 'path', 'published', 'language', 'description']))
-            ->from($db->quoteName('#__tags'))
-            ->where($db->quoteName('id') . ' = :id')
-            ->bind(':id', $id, ParameterType::INTEGER);
+        $item = $this->loadTag($id);
 
-        $row = $db->setQuery($q)->loadAssoc();
-
-        if (!$row) {
+        if (!$item) {
             throw new McpToolException('Tag not found: ' . $id);
         }
 
-        return $this->withTagUrls($row, $id);
+        return $this->withTagUrls([
+            'id'          => (int) $item->id,
+            'title'       => (string) $item->title,
+            'alias'       => (string) $item->alias,
+            'parent_id'   => (int) $item->parent_id,
+            'level'       => (int) $item->level,
+            'path'        => (string) $item->path,
+            'published'   => (int) $item->published,
+            'language'    => (string) $item->language,
+            'description' => (string) $item->description,
+        ], $item);
     }
 
     /**
      * Injecte `url` (+ `urls` multilingue) pour un tag (com_tags), via le trait
-     * partagé {@see ResolvesPublicUrls}.
+     * partagé {@see ResolvesPublicUrls}. Lien interne de RouteHelper::getComponentTagRoute()
+     * du cœur (com_tags), sans langue.
      *
      * @param array<string,mixed> $result
      * @return array<string,mixed>
      */
-    private function withTagUrls(array $result, int $id): array
+    private function withTagUrls(array $result, ?object $item): array
     {
-        try {
-            $db  = $this->db();
-            $row = $db->setQuery(
-                $db->getQuery(true)
-                    ->select($db->quoteName(['id', 'alias', 'language']))
-                    ->from($db->quoteName('#__tags'))
-                    ->where($db->quoteName('id') . ' = :id')
-                    ->bind(':id', $id, ParameterType::INTEGER)
-            )->loadObject();
-        } catch (\Throwable) {
-            $row = null;
-        }
-
-        if (!$row) {
+        if (!$item) {
             $result['url'] = '';
 
             return $result;
         }
 
-        $slug = $row->id . (($row->alias ?? '') !== '' ? ':' . $row->alias : '');
-        $base = 'index.php?option=com_tags&view=tag&id[0]=' . $slug;
+        $slug = $item->id . (((string) ($item->alias ?? '')) !== '' ? ':' . $item->alias : '');
 
-        return $this->withPublicUrls($result, $base, (string) $row->language);
+        $public = $this->isPubliclyVisible((int) $item->published, (int) $item->access, $item->publish_up ?? null, $item->publish_down ?? null);
+
+        return $this->withPublicUrls($result, TagsRouteHelper::getComponentTagRoute($slug), (string) $item->language, $public);
     }
 
     private function createTag(array $a): array
@@ -253,7 +264,7 @@ final class TagTools
         }
 
         $tid    = (int) $model->getState('tag.id');
-        $result = $this->withTagUrls(['ok' => true, 'id' => $tid, 'title' => $title], $tid);
+        $result = $this->withTagUrls(['ok' => true, 'id' => $tid, 'title' => $title], $this->loadTag($tid));
 
         return $gate['ignored'] ? $result + ['ignored' => $gate['ignored']] : $result;
     }
@@ -297,7 +308,7 @@ final class TagTools
             throw new McpToolException('Update failed: ' . $this->modelErrors($model));
         }
 
-        $result = $this->withTagUrls(['ok' => true, 'id' => $id], $id);
+        $result = $this->withTagUrls(['ok' => true, 'id' => $id], $this->loadTag($id));
 
         return $gate['ignored'] ? $result + ['ignored' => $gate['ignored']] : $result;
     }
@@ -348,20 +359,24 @@ final class TagTools
         return ['ok' => true, 'ids' => $deleted, 'deleted' => true];
     }
 
-    /** Sous-ensemble des ids de tags encore présents en base. */
+    /** Sous-ensemble des ids de tags encore présents. */
     private function existingIds(array $ids): array
     {
         if (!$ids) {
             return [];
         }
 
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName('id'))
-            ->from($db->quoteName('#__tags'))
-            ->whereIn($db->quoteName('id'), $ids);
+        // Table du modèle Tag (classe du cœur com_tags) : présence de chaque id.
+        $out   = [];
+        $table = $this->model()->getTable();
 
-        return array_map('intval', $db->setQuery($q)->loadColumn());
+        foreach ($ids as $id) {
+            if ($table->load((int) $id)) {
+                $out[] = (int) $id;
+            }
+        }
+
+        return $out;
     }
 
     private function modelErrors($model): string

@@ -8,7 +8,6 @@ namespace Sensomedia\Plugin\Sensomcp\Content\Tool;
 
 use Joomla\CMS\Factory;
 use Joomla\Component\Fields\Administrator\Helper\FieldsHelper;
-use Joomla\Database\DatabaseInterface;
 
 \defined('_JEXEC') or die;
 
@@ -40,15 +39,15 @@ final class FieldsSupport
      */
     public function listFor(int $catid): array
     {
-        $groups = $this->groupTitles();
-        $out    = [];
+        $out = [];
 
         foreach ($this->fieldsFor($catid) as $f) {
             $entry = [
                 'name'     => $f->name,
                 'title'    => $f->title,
                 'type'     => $f->type,
-                'group'    => $groups[$f->group_id] ?? null,
+                // Titre du groupe fourni par le modèle Fields (jointure #__fields_groups).
+                'group'    => ((int) $f->group_id > 0 && ($f->group_title ?? null) !== null) ? (string) $f->group_title : null,
                 'required' => (bool) $f->required,
                 'default'  => $f->default_value,
                 'options'  => $this->options($f),
@@ -283,22 +282,25 @@ final class FieldsSupport
             return [];
         }
 
-        $db    = Factory::getContainer()->get(DatabaseInterface::class);
-        $query = $db->getQuery(true)
-            ->select($db->quoteName(['id', 'name', 'title', 'type']))
-            ->from($db->quoteName('#__fields'))
-            ->whereIn($db->quoteName('id'), $ids);
-        $rows = $db->setQuery($query)->loadAssocList('id') ?: [];
-        $out  = [];
+        // Même résolution que plg_fields_subform : FieldsHelper::getFields() avec les champs
+        // « Only use in subform » inclus (publiés seulement — un sous-champ dépublié est de
+        // toute façon ignoré par le subform du cœur).
+        $rows = [];
+
+        foreach (FieldsHelper::getFields($this->context, null, false, null, true) ?: [] as $f) {
+            $rows[(int) $f->id] = $f;
+        }
+
+        $out = [];
 
         foreach ($ids as $id) {
             if (isset($rows[$id])) {
                 $out[] = [
                     'key'   => 'field' . $id,
                     'id'    => $id,
-                    'name'  => (string) $rows[$id]['name'],
-                    'title' => (string) $rows[$id]['title'],
-                    'type'  => (string) $rows[$id]['type'],
+                    'name'  => (string) $rows[$id]->name,
+                    'title' => (string) $rows[$id]->title,
+                    'type'  => (string) $rows[$id]->type,
                 ];
             }
         }
@@ -412,17 +414,5 @@ final class FieldsSupport
         }
 
         return $out;
-    }
-
-    /** @return array<int,string> group_id => titre */
-    private function groupTitles(): array
-    {
-        $db    = Factory::getContainer()->get(DatabaseInterface::class);
-        $query = $db->getQuery(true)
-            ->select($db->quoteName(['id', 'title']))
-            ->from($db->quoteName('#__fields_groups'))
-            ->where($db->quoteName('context') . ' = ' . $db->quote($this->context));
-
-        return $db->setQuery($query)->loadAssocList('id', 'title') ?: [];
     }
 }

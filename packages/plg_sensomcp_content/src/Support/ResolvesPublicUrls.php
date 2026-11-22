@@ -6,7 +6,10 @@
 
 namespace Sensomedia\Plugin\Sensomcp\Content\Support;
 
+use Joomla\CMS\Access\Access;
 use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Factory;
+use Joomla\CMS\Language\LanguageHelper;
 use Joomla\CMS\Language\Multilanguage;
 use Joomla\CMS\Router\Route;
 
@@ -20,8 +23,6 @@ use Joomla\CMS\Router\Route;
  * en suivant la redirection 301 canonique du site — de sorte que les alias SEF
  * traduits par un éventuel plugin multilingue (côté parse) soient repris
  * automatiquement, sans couplage. Repli systématique sur l'URL construite.
- *
- * La classe utilisatrice doit exposer `db(): DatabaseInterface`.
  */
 trait ResolvesPublicUrls
 {
@@ -35,11 +36,13 @@ trait ResolvesPublicUrls
      * @param array<string,mixed> $result
      * @param string              $queryBase ex. index.php?option=com_content&view=article&id=5:alias&catid=9
      * @param string              $language  langue de l'entité (`*` = toutes)
+     * @param bool                $resolve   false = entité invisible pour un visiteur anonyme : on renvoie
+     *                                       l'URL construite SANS requête HTTP (voir isPubliclyVisible())
      * @return array<string,mixed>
      */
-    private function withPublicUrls(array $result, string $queryBase, string $language): array
+    private function withPublicUrls(array $result, string $queryBase, string $language, bool $resolve = true): array
     {
-        $data          = $this->publicUrlData($queryBase, $language);
+        $data          = $this->publicUrlData($queryBase, $language, $resolve);
         $result['url'] = $data['url'];
 
         if ($data['urls'] !== []) {
@@ -52,7 +55,7 @@ trait ResolvesPublicUrls
     /**
      * @return array{url:string, urls:array<string,string>}
      */
-    private function publicUrlData(string $queryBase, string $language): array
+    private function publicUrlData(string $queryBase, string $language, bool $resolve = true): array
     {
         // Site monolingue (filtre de langue désactivé) : le routeur ne consomme pas `lang`,
         // qui resterait en `?lang=xx-XX` dans l'URL → une seule URL, sans langue.
@@ -73,11 +76,36 @@ trait ResolvesPublicUrls
             return ['url' => '', 'urls' => []];
         }
 
-        $urls    = $this->resolvePublicUrls($built);
+        $urls    = $resolve ? $this->resolvePublicUrls($built) : $built;
         $default = $urls[$this->defaultContentLanguage()] ?? reset($urls);
 
         // Map exposée seulement pour une entité réellement multilingue (`*` + ≥2 langues).
         return ['url' => (string) $default, 'urls' => \count($urls) > 1 ? $urls : []];
+    }
+
+    /**
+     * L'entité est-elle visible par un visiteur ANONYME ? Seule une page visible peut être résolue :
+     * pour une entité non publiée, hors de ses dates, réservée à un niveau d'accès non public ou rangée
+     * dans une catégorie non publique, la requête anonyme reçoit un 404 que plg_system_redirect
+     * enregistre (« collecter les URL ») — le gestionnaire de redirections des sites se remplissait des
+     * brouillons lus ou créés via MCP (une entrée par langue active). Aucune page canonique n'existe de
+     * toute façon dans ce cas : on renvoie l'URL construite.
+     *
+     * @param object|null $category catégorie de l'entité (published, access), null si sans objet
+     */
+    private function isPubliclyVisible(int $state, int $access, mixed $publishUp = null, mixed $publishDown = null, ?object $category = null): bool
+    {
+        $now    = Factory::getDate()->toSql();
+        $levels = array_map('intval', Access::getAuthorisedViewLevels(0) ?: [1]);
+
+        if ($state !== 1 || !\in_array($access, $levels, true)
+            || (!empty($publishUp) && (string) $publishUp > $now)
+            || (!empty($publishDown) && (string) $publishDown < $now)) {
+            return false;
+        }
+
+        return $category === null
+            || ((int) ($category->published ?? 1) === 1 && \in_array((int) ($category->access ?? 1), $levels, true));
     }
 
     /**
@@ -169,14 +197,13 @@ trait ResolvesPublicUrls
         $out = [];
 
         try {
-            $db = $this->db();
-            $q  = $db->getQuery(true)
-                ->select($db->quoteName('lang_code'))
-                ->from($db->quoteName('#__languages'))
-                ->where($db->quoteName('published') . ' = 1')
-                ->order($db->quoteName('ordering') . ' ASC');
+            // LanguageHelper (J5/J6) : langues de contenu publiées, sans filtre « pack installé »
+            // (comportement antérieur conservé). Tri numérique sur `ordering` fait ici :
+            // sortObjects() comparerait les chaînes SQL ("10" < "2").
+            $langs = array_values(LanguageHelper::getContentLanguages([1], false, null));
+            usort($langs, static fn ($x, $y): int => [(int) $x->ordering, (int) $x->lang_id] <=> [(int) $y->ordering, (int) $y->lang_id]);
             $out = array_values(array_filter(
-                $db->setQuery($q)->loadColumn() ?: [],
+                array_map(static fn ($l): string => (string) $l->lang_code, $langs),
                 static fn ($c): bool => $c !== '' && $c !== '*'
             ));
         } catch (\Throwable) {

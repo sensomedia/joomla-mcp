@@ -8,6 +8,7 @@ namespace Sensomedia\Plugin\Sensomcp\Banners\Tool;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Form;
+use Joomla\CMS\Language\Text;
 use Joomla\CMS\User\User;
 use Joomla\Registry\Registry;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ActionLogContext;
@@ -234,6 +235,11 @@ final class BannerTools
 
     // ------------------------------------------------------------------ lecture
 
+    /**
+     * Comptes par état, bannières expirées / au quota : EXCEPTIONS SQL assumées (agrégats de
+     * reporting sans équivalent dans le modèle Banners, décision Fred 22/11/2026). Le reste passe par
+     * le cœur : modèle Clients (total), modèle Categories, modèle Modules + ModuleModel (mod_banners).
+     */
     private function status(): array
     {
         $db     = $this->s->db();
@@ -254,34 +260,7 @@ final class BannerTools
         $expired = (clone $base)->where($db->quoteName('publish_down') . ' IS NOT NULL')->where($db->quoteName('publish_down') . ' < ' . $now);
         $quota   = (clone $base)->where($db->quoteName('imptotal') . ' > 0')->where($db->quoteName('impmade') . ' >= ' . $db->quoteName('imptotal'));
 
-        $modules = [];
-
-        foreach ($db->setQuery(
-            $db->getQuery(true)
-                ->select($db->quoteName(['m.id', 'm.title', 'm.position', 'm.published', 'm.language', 'm.params']))
-                ->select('(SELECT COUNT(*) FROM ' . $db->quoteName('#__modules_menu', 'mm') . ' WHERE ' . $db->quoteName('mm.moduleid') . ' = '
-                    . $db->quoteName('m.id') . ' AND ' . $db->quoteName('mm.menuid') . ' = 0) AS ' . $db->quoteName('all_pages'))
-                ->select('(SELECT COUNT(*) FROM ' . $db->quoteName('#__modules_menu', 'mm2') . ' WHERE ' . $db->quoteName('mm2.moduleid') . ' = '
-                    . $db->quoteName('m.id') . ') AS ' . $db->quoteName('assignments'))
-                ->from($db->quoteName('#__modules', 'm'))
-                ->where($db->quoteName('m.module') . ' = ' . $db->quote('mod_banners'))
-                ->where($db->quoteName('m.client_id') . ' = 0')
-                ->where($db->quoteName('m.published') . ' IN (0, 1)')
-        )->loadAssocList() as $m) {
-            $p = new Registry($m['params']);
-            $modules[] = [
-                'id'        => (int) $m['id'],
-                'title'     => (string) $m['title'],
-                'position'  => (string) $m['position'],
-                'state'     => (int) $m['published'] === 1 ? 'published' : 'unpublished',
-                'pages'     => (int) $m['all_pages'] > 0 ? 'all' : ((int) $m['assignments'] > 0 ? 'selected' : 'none'),
-                'count'     => (int) $p->get('count', 5),
-                'catid'     => array_values(array_filter((array) $p->get('catid', []))),
-                'client_id' => (int) $p->get('cid', 0),
-                'keywords'  => (bool) $p->get('tag_search', 0),
-                'language'  => (string) $m['language'],
-            ];
-        }
+        $modules = $this->bannerModules();
 
         $warnings = [];
 
@@ -299,13 +278,18 @@ final class BannerTools
             'banners'          => $counts,
             'expired'          => $db->setQuery($expired)->loadAssocList(),
             'quota_reached'    => $db->setQuery($quota)->loadAssocList(),
-            'clients'          => (int) $db->setQuery($db->getQuery(true)->select('COUNT(*)')->from($db->quoteName('#__banner_clients'))->where($db->quoteName('state') . ' <> -2'))->loadResult(),
+            'clients'          => $this->clientCount(),
             'categories'       => \count($this->s->categories()),
             'modules'          => $modules,
             'warnings'         => $warnings,
         ];
     }
 
+    /**
+     * EXCEPTION SQL assumée (décision Fred, 22/11/2026) : le modèle Banners du back-office ne sait pas
+     * chercher dans l'URL de clic, filtrer par type ou « épinglée », trier par impressions / clics, ni
+     * lister « tout sauf la corbeille ». Lecture seule ; les écritures passent par BannerModel.
+     */
     private function listBanners(array $a): array
     {
         [$offset, $limit] = Pagination::bounds($a, 20, 100);
@@ -428,6 +412,10 @@ final class BannerTools
         ];
     }
 
+    /**
+     * EXCEPTION SQL assumée : agrégats de #__banner_tracks par jour / mois / total. Le modèle Tracks du
+     * cœur liste les lignes brutes, sans agrégation ni filtre par bannière.
+     */
     private function stats(array $a): array
     {
         $db    = $this->s->db();
@@ -712,6 +700,7 @@ final class BannerTools
     {
         $rows = $this->s->rows('#__banners', $this->s->ids($a['ids'] ?? null), ['id', 'name', 'impmade', 'clicks']);
         $db   = $this->s->db();
+        // EXCEPTION SQL assumée : total de l'historique de suivi des bannières (agrégat).
         $hist = $rows === [] ? 0 : (int) $db->setQuery(
             $db->getQuery(true)->select('COALESCE(SUM(' . $db->quoteName('count') . '), 0)')->from($db->quoteName('#__banner_tracks'))
                 ->whereIn($db->quoteName('banner_id'), array_keys($rows))
@@ -754,6 +743,8 @@ final class BannerTools
         $cleared = 0;
 
         if (!empty($a['clear_tracking']) && $reset !== []) {
+            // EXCEPTION SQL assumée : TracksModel::delete() du cœur purge selon les filtres de la liste
+            // (client, catégorie, type, dates), jamais pour des bannières précises.
             $db = $this->s->db();
             $db->setQuery($db->getQuery(true)->delete($db->quoteName('#__banner_tracks'))->whereIn($db->quoteName('banner_id'), $reset))->execute();
             $cleared = (int) $db->getAffectedRows();
@@ -879,10 +870,63 @@ final class BannerTools
 
     private function categoryTitle(int $id): string
     {
-        $db = $this->s->db();
+        return (string) ($this->s->category($id)->title ?? '');
+    }
 
-        return (string) $db->setQuery(
-            $db->getQuery(true)->select($db->quoteName('title'))->from($db->quoteName('#__categories'))->where($db->quoteName('id') . ' = ' . $id)
-        )->loadResult();
+    /** Clients hors corbeille : modèle Clients du cœur (tous états − corbeille). */
+    private function clientCount(): int
+    {
+        $total = function (string $state): int {
+            $m = $this->s->model('Clients');
+            $m->setState('filter.state', $state);
+
+            return (int) $m->getTotal();
+        };
+
+        return $total('*') - $total('-2');
+    }
+
+    /**
+     * Modules mod_banners du site (publiés ou non) : modèle Modules de com_modules (affectation aux
+     * pages incluse) puis ModuleModel::getItem() pour les paramètres de chaque module.
+     */
+    private function bannerModules(): array
+    {
+        $factory = Factory::getApplication()->bootComponent('com_modules')->getMVCFactory();
+        $list    = $factory->createModel('Modules', 'Administrator', ['ignore_request' => true]);
+        $list->setState('client_id', 0);
+        $list->setState('filter.module', 'mod_banners');
+        $list->setState('filter.state', '');
+        $list->setState('list.ordering', 'a.id');
+        $list->setState('list.direction', 'ASC');
+        $list->setState('list.start', 0);
+        $list->setState('list.limit', 0);
+
+        $out = [];
+
+        foreach ((array) $list->getItems() as $m) {
+            // `pages` = MIN(menuid) traduit par le modèle : JNONE (aucune), JALL (toutes), sinon sélection.
+            $pages = $m->pages ?? null;
+            $pages = ($pages === null || $pages === Text::_('JNONE')) ? 'none'
+                : (((string) $pages === '0' || $pages === Text::_('JALL')) ? 'all' : 'selected');
+
+            $item = $factory->createModel('Module', 'Administrator', ['ignore_request' => true])->getItem((int) $m->id);
+            $p    = new Registry($item->params ?? []);
+
+            $out[] = [
+                'id'        => (int) $m->id,
+                'title'     => (string) $m->title,
+                'position'  => (string) $m->position,
+                'state'     => (int) $m->published === 1 ? 'published' : 'unpublished',
+                'pages'     => $pages,
+                'count'     => (int) $p->get('count', 5),
+                'catid'     => array_values(array_filter((array) $p->get('catid', []))),
+                'client_id' => (int) $p->get('cid', 0),
+                'keywords'  => (bool) $p->get('tag_search', 0),
+                'language'  => (string) $m->language,
+            ];
+        }
+
+        return $out;
     }
 }

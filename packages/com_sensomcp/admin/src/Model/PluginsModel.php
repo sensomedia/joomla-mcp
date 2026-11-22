@@ -12,7 +12,7 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\UserFactoryInterface;
-use Joomla\Database\ParameterType;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\ComponentParams;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolCollector;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolState;
 
@@ -26,37 +26,42 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolState;
 class PluginsModel extends BaseDatabaseModel
 {
     /**
-     * Plugins d'OUTILS MCP (groupe `sensomcp` uniquement), avec état d'activation.
+     * Plugins d'OUTILS MCP (groupe `sensomcp` uniquement), avec état d'activation. Modèle « Manage »
+     * de com_installer (J5/J6, la liste du gestionnaire d'extensions, lecture sans ACL) : nom traduit
+     * par le cœur (fichier .sys du plugin), version issue du manifeste.
      *
      * @return list<array{id:int, element:string, folder:string, label:string, enabled:bool}>
      */
     public function getPlugins(): array
     {
-        $db  = $this->getDatabase();
-        $q   = $db->getQuery(true)
-            ->select($db->quoteName(['extension_id', 'element', 'name', 'enabled', 'manifest_cache']))
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-            ->where($db->quoteName('folder') . ' = ' . $db->quote('sensomcp'))
-            ->order($db->quoteName('element') . ' ASC');
+        $model = Factory::getApplication()->bootComponent('com_installer')
+            ->getMVCFactory()->createModel('Manage', 'Administrator', ['ignore_request' => true]);
+        $model->setState('filter.type', 'plugin');
+        $model->setState('filter.folder', 'sensomcp');
+        $model->setState('list.ordering', 'element');
+        $model->setState('list.direction', 'ASC');
+        $model->setState('list.start', 0);
+        $model->setState('list.limit', 0);
 
         $lang = Factory::getApplication()->getLanguage();
         $out  = [];
 
-        foreach ($db->setQuery($q)->loadAssocList() ?: [] as $r) {
-            $element  = (string) $r['element'];
-            $manifest = json_decode((string) ($r['manifest_cache'] ?? ''), true);
+        foreach ((array) $model->getItems() as $r) {
+            $element = (string) $r->element;
+            // Le fichier de langue complet du plugin (libellés de l'écran), en plus du .sys du cœur.
             $lang->load('plg_sensomcp_' . $element, JPATH_ADMINISTRATOR);
 
             $out[] = [
-                'id'      => (int) $r['extension_id'],
+                'id'      => (int) $r->extension_id,
                 'element' => $element,
                 'folder'  => 'sensomcp',
-                'label'   => Text::_((string) $r['name']),
-                'enabled' => (bool) $r['enabled'],
-                'version' => (string) ($manifest['version'] ?? ''),
+                'label'   => Text::_((string) $r->name),
+                'enabled' => (bool) $r->enabled,
+                'version' => (string) ($r->version ?? ''),
             ];
         }
+
+        usort($out, static fn ($x, $y): int => strcmp($x['element'], $y['element']));
 
         return $out;
     }
@@ -160,34 +165,17 @@ class PluginsModel extends BaseDatabaseModel
     /** Params du composant lus NON cachés. */
     private function componentParams(): array
     {
-        $db = $this->getDatabase();
-
-        return json_decode((string) $db->setQuery(
-            $db->getQuery(true)
-                ->select($db->quoteName('params'))
-                ->from($db->quoteName('#__extensions'))
-                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-                ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'))
-        )->loadResult(), true) ?: [];
+        return ComponentParams::get();
     }
 
     private function storeCatalogCache(array $params, array $plugins): void
     {
-        $params['catalog_json'] = json_encode($plugins, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $params['catalog_at']   = time();
-        $params['catalog_key']  = (string) ($params['license_key'] ?? '');
-        $params['catalog_lang'] = $this->currentLang();
-        $json                   = json_encode($params, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-        $db = $this->getDatabase();
-        $u  = $db->getQuery(true)
-            ->update($db->quoteName('#__extensions'))
-            ->set($db->quoteName('params') . ' = :p')
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'))
-            ->bind(':p', $json, ParameterType::STRING);
-
-        $db->setQuery($u)->execute();
+        ComponentParams::set([
+            'catalog_json' => json_encode($plugins, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'catalog_at'   => time(),
+            'catalog_key'  => (string) ($params['license_key'] ?? ''),
+            'catalog_lang' => $this->currentLang(),
+        ]);
     }
 
     /** Retire le préfixe « Senso MCP » (+ tiret/espaces) d'un nom de plugin. */

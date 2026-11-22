@@ -9,51 +9,53 @@ namespace Sensomedia\Component\Sensomcp\Administrator\Helper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
+use Joomla\CMS\Table\Update;
 use Joomla\Database\DatabaseInterface;
 
 \defined('_JEXEC') or die;
 
 /**
  * Détection d'une mise à jour du PACK FREE (Senso MCP) et rendu de la bannière
- * commune à toutes les vues du composant. S'appuie sur `#__updates` (rempli par
- * le vérificateur de mises à jour Joomla).
+ * commune à toutes les vues du composant. S'appuie sur la table « Update » du cœur
+ * (#__updates, remplie par le vérificateur de mises à jour Joomla).
  */
 final class Updates
 {
-    /** Version disponible du pack free (com_sensomcp / pkg_sensomcp), ou null. */
+    /**
+     * Version disponible du pack free (com_sensomcp / pkg_sensomcp), ou null. Table « Update » du
+     * cœur (#__updates, rempli par le vérificateur de mises à jour) ; la plus haute au sens
+     * version_compare() (l'ancien ORDER BY version DESC comparait des chaînes : « 1.10 » < « 1.9 »).
+     */
     public static function freePackageVersion(): ?string
     {
         try {
-            $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $q  = $db->getQuery(true)
-                ->select($db->quoteName('version'))
-                ->from($db->quoteName('#__updates'))
-                ->whereIn($db->quoteName('element'), ['com_sensomcp', 'pkg_sensomcp'], \Joomla\Database\ParameterType::STRING)
-                ->order($db->quoteName('version') . ' DESC')
-                ->setLimit(1);
+            $best = null;
 
-            $v = (string) ($db->setQuery($q)->loadResult() ?: '');
+            foreach (['pkg_sensomcp', 'com_sensomcp'] as $element) {
+                $t = new Update(Factory::getContainer()->get(DatabaseInterface::class));
 
-            return $v !== '' ? $v : null;
+                if ($t->load(['element' => $element])) {
+                    $v = trim((string) $t->version);
+
+                    if ($v !== '' && ($best === null || version_compare($v, $best, '>'))) {
+                        $best = $v;
+                    }
+                }
+            }
+
+            return $best;
         } catch (\Throwable) {
             return null;
         }
     }
 
-    /** Version installée du composant com_sensomcp (depuis manifest_cache). */
+    /** Version installée du composant com_sensomcp (manifest_cache, table « Extension » du cœur). */
     public static function componentVersion(): string
     {
         try {
-            $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $mc = (string) $db->setQuery(
-                $db->getQuery(true)
-                    ->select($db->quoteName('manifest_cache'))
-                    ->from($db->quoteName('#__extensions'))
-                    ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-                    ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'))
-            )->loadResult();
+            $row = ExtensionRecords::component('com_sensomcp');
 
-            return (string) (json_decode($mc, true)['version'] ?? '');
+            return (string) (json_decode((string) ($row->manifest_cache ?? ''), true)['version'] ?? '');
         } catch (\Throwable) {
             return '';
         }

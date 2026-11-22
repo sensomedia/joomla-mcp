@@ -7,44 +7,41 @@
 namespace Sensomedia\Component\Sensomcp\Administrator\Helper;
 
 use Joomla\CMS\Factory;
-use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
 
 \defined('_JEXEC') or die;
 
 /**
- * Écrit des params de com_sensomcp hors du formulaire Options (boutons des vues).
- * Les autres clés sont conservées. Le cache `_system` est vidé : ComponentHelper
- * y garde les params, sans quoi les requêtes suivantes liraient l'ancienne valeur.
+ * Params de com_sensomcp lus et écrits hors du formulaire Options (boutons des vues, réglages
+ * instantanés), via la table « Extension » du cœur ({@see ExtensionRecords}).
+ *
+ * - get() lit SANS cache : ComponentHelper::getParams() garde les params en cache (_system) ; les
+ *   kill-switches, la clé de licence et les réglages de sécurité doivent prendre effet immédiatement.
+ * - set() fusionne : les autres clés sont conservées. Le cache `_system` est vidé, sans quoi les
+ *   requêtes suivantes liraient l'ancienne valeur via ComponentHelper.
  */
 final class ComponentParams
 {
+    private const ELEMENT = 'com_sensomcp';
+
+    /** @return array<string,mixed> */
+    public static function get(): array
+    {
+        try {
+            return ExtensionRecords::params(ExtensionRecords::component(self::ELEMENT));
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
     public static function set(array $changes): void
     {
-        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $row = ExtensionRecords::component(self::ELEMENT);
 
-        $q = $db->getQuery(true)
-            ->select($db->quoteName('params'))
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'));
-
-        $params = json_decode((string) $db->setQuery($q)->loadResult(), true) ?: [];
-
-        foreach ($changes as $key => $value) {
-            $params[$key] = $value;
+        if (!$row) {
+            return;
         }
 
-        $json = (string) json_encode($params);
-
-        $u = $db->getQuery(true)
-            ->update($db->quoteName('#__extensions'))
-            ->set($db->quoteName('params') . ' = :params')
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'))
-            ->bind(':params', $json, ParameterType::STRING);
-
-        $db->setQuery($u)->execute();
+        ExtensionRecords::setParams($row, array_merge(ExtensionRecords::params($row), $changes));
 
         try {
             Factory::getCache('_system')->clean();

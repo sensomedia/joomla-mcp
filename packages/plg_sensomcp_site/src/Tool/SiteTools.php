@@ -6,7 +6,10 @@
 
 namespace Sensomedia\Plugin\Sensomcp\Site\Tool;
 
+use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Extension\ExtensionHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Helper\UserGroupsHelper;
 use Joomla\CMS\Http\HttpFactory;
 use Joomla\CMS\Language\LanguageHelper;
 use Joomla\CMS\Language\Multilanguage;
@@ -14,7 +17,7 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\User;
 use Joomla\CMS\Version;
-use Joomla\Database\DatabaseInterface;
+use Sensomedia\Component\Sensomcp\Administrator\Mcp\ActionLogContext;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\UrlGuard;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
@@ -158,11 +161,6 @@ final class SiteTools
 
     // ---------------------------------------------------------------------
 
-    private function db(): DatabaseInterface
-    {
-        return Factory::getContainer()->get(DatabaseInterface::class);
-    }
-
     private function getSiteInfo(ToolRegistry $registry): array
     {
         $app      = Factory::getApplication();
@@ -214,56 +212,67 @@ final class SiteTools
     /** Nom du template site actif (style par défaut, ex. « yootheme »). */
     private function activeTemplate(): ?string
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName('template'))
-            ->from($db->quoteName('#__template_styles'))
-            ->where($db->quoteName('client_id') . ' = 0')
-            ->where($db->quoteName('home') . ' <> ' . $db->quote('0'))
-            ->order('CASE WHEN ' . $db->quoteName('home') . ' = ' . $db->quote('1') . ' THEN 0 ELSE 1 END ASC');
+        // Table « Style » de com_templates (J5/J6) : style site par défaut (home = '1').
+        try {
+            $table = Factory::getApplication()->bootComponent('com_templates')
+                ->getMVCFactory()->createTable('Style', 'Administrator');
 
-        $tpl = (string) $db->setQuery($q, 0, 1)->loadResult();
+            if ($table && $table->load(['client_id' => 0, 'home' => '1'])) {
+                $tpl = (string) $table->template;
 
-        return $tpl !== '' ? $tpl : null;
+                return $tpl !== '' ? $tpl : null;
+            }
+        } catch (\Throwable) {
+            // pas de style par défaut lisible
+        }
+
+        return null;
     }
 
     private function listAccessLevels(): array
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['id', 'title']))
-            ->from($db->quoteName('#__viewlevels'))
-            ->order($db->quoteName('ordering') . ' ASC');
+        // Modèle « Levels » de com_users (liste des niveaux d'accès du back-office, J5/J6).
+        $model = Factory::getApplication()->bootComponent('com_users')
+            ->getMVCFactory()->createModel('Levels', 'Administrator', ['ignore_request' => true]);
+        $model->setState('list.ordering', 'a.ordering');
+        $model->setState('list.direction', 'ASC');
+        $model->setState('list.start', 0);
+        $model->setState('list.limit', 0);
 
         $rows = array_map(static fn ($r) => [
-            'id'    => (int) $r['id'],
-            'title' => (string) $r['title'],
-        ], $db->setQuery($q)->loadAssocList() ?: []);
+            'id'    => (int) $r->id,
+            'title' => (string) $r->title,
+        ], (array) $model->getItems());
 
         return ['access_levels' => $rows];
     }
 
     private function listInstalledComponents(): array
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['element', 'name']))
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('enabled') . ' = 1')
-            ->order($db->quoteName('element') . ' ASC');
-
+        // ComponentHelper (J5/J6, en cache) : composants installés et actifs. Le nom affiché est
+        // celui du gestionnaire d'extensions : ExtensionHelper donne le nom en base (souvent une
+        // clé de langue, ex. COM_CONTENT), traduit après chargement du fichier de langue système
+        // du composant — comme InstallerModel::translate() du cœur.
         $lang = Factory::getApplication()->getLanguage();
         $out  = [];
 
-        foreach ($db->setQuery($q)->loadAssocList() ?: [] as $r) {
-            $element = (string) $r['element'];
-            // Le nom en base est souvent une clé de langue (ex. com_content) → traduire.
-            $lang->load($element, JPATH_ADMINISTRATOR);
-            $name = Text::_((string) $r['name']);
+        foreach (ComponentHelper::getComponents() as $option => $component) {
+            if (!$component->enabled) {
+                continue;
+            }
 
-            $out[] = ['element' => $element, 'name' => $name];
+            $row     = ExtensionHelper::getExtensionRecord((string) $option, 'component');
+            $element = (string) $option;
+            $lang->load($element, JPATH_ADMINISTRATOR)
+                || $lang->load($element . '.sys', JPATH_ADMINISTRATOR)
+                || $lang->load($element . '.sys', JPATH_ADMINISTRATOR . '/components/' . $element);
+
+            // Certains fichiers de langue mettent du HTML dans le nom (ex. icône <img> de JSitemap).
+            $name  = trim(html_entity_decode(strip_tags(Text::_((string) ($row->name ?? $element))), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+            $out[] = ['element' => $element, 'name' => $name !== '' ? $name : $element];
         }
+
+        usort($out, static fn ($x, $y): int => strcmp($x['element'], $y['element']));
 
         return ['components' => $out];
     }
@@ -275,18 +284,16 @@ final class SiteTools
      */
     private function languages(): array
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['lang_code', 'title', 'sef']))
-            ->from($db->quoteName('#__languages'))
-            ->where($db->quoteName('published') . ' = 1')
-            ->order($db->quoteName('ordering') . ' ASC');
+        // LanguageHelper (J5/J6) : langues de contenu publiées (sans filtre « pack installé ») ;
+        // tri numérique sur `ordering` fait ici (sortObjects() comparerait des chaînes).
+        $langs = array_values(LanguageHelper::getContentLanguages([1], false, null));
+        usort($langs, static fn ($x, $y): int => [(int) $x->ordering, (int) $x->lang_id] <=> [(int) $y->ordering, (int) $y->lang_id]);
 
-        $content = array_map(static fn ($r) => [
-            'code' => $r['lang_code'],
-            'sef'  => $r['sef'],
-            'name' => $r['title'],
-        ], $db->setQuery($q)->loadAssocList() ?: []);
+        $content = array_map(static fn ($l) => [
+            'code' => $l->lang_code,
+            'sef'  => $l->sef,
+            'name' => $l->title,
+        ], $langs);
 
         return [
             'multilingual' => Multilanguage::isEnabled(),
@@ -355,14 +362,16 @@ final class SiteTools
             return [];
         }
 
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName('title'))
-            ->from($db->quoteName('#__usergroups'))
-            ->whereIn($db->quoteName('id'), $ids)
-            ->order($db->quoteName('lft') . ' ASC');
+        // UserGroupsHelper (J5/J6) : tous les groupes, déjà triés par lft, mis en cache.
+        $out = [];
 
-        return array_map('strval', $db->setQuery($q)->loadColumn());
+        foreach (UserGroupsHelper::getInstance()->getAll() as $group) {
+            if (\in_array((int) $group->id, $ids, true)) {
+                $out[] = (string) $group->title;
+            }
+        }
+
+        return $out;
     }
 
     // ---------------------------------------------------------------------
@@ -456,15 +465,7 @@ final class SiteTools
     /** JCH Optimize (composant) présent et actif ? */
     private function jchInstalled(): bool
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select('COUNT(*)')
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('com_jchoptimize'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('enabled') . ' = 1');
-
-        return (int) $db->setQuery($q)->loadResult() > 0;
+        return ComponentHelper::isEnabled('com_jchoptimize');
     }
 
     /** Boot du composant JCH (autoloading + constante JCH_PRO sur JCH ≤ 9.4.1) → ComponentInterface. */
@@ -564,20 +565,14 @@ final class SiteTools
     /** État courant des 2 plugins système : [element => {found, enabled}]. */
     private function jchCachePlugins(): array
     {
-        $db     = $this->db();
-        $inList = implode(',', array_map([$db, 'quote'], ['jchoptimize', 'jchpagecache']));
-        $q      = $db->getQuery(true)
-            ->select($db->quoteName(['element', 'enabled']))
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-            ->where($db->quoteName('folder') . ' = ' . $db->quote('system'))
-            ->where($db->quoteName('element') . ' IN (' . $inList . ')');
-        $rows   = $db->setQuery($q)->loadObjectList('element') ?: [];
-
         $out = [];
+
+        // ExtensionHelper::getExtensionRecord (J5/J6) : la ligne #__extensions, plugin activé ou non
+        // (PluginHelper ne connaît que les plugins actifs et accessibles).
         foreach (['jchoptimize', 'jchpagecache'] as $el) {
-            $out[$el] = isset($rows[$el])
-                ? ['found' => true, 'enabled' => (bool) $rows[$el]->enabled]
+            $row      = ExtensionHelper::getExtensionRecord($el, 'plugin', null, 'system');
+            $out[$el] = $row
+                ? ['found' => true, 'enabled' => (bool) $row->enabled, 'id' => (int) $row->extension_id]
                 : ['found' => false, 'enabled' => false];
         }
 
@@ -593,25 +588,32 @@ final class SiteTools
 
         $enabled = (bool) $a['enabled'];
         $before  = $this->jchCachePlugins();
-        $db      = $this->db();
 
         $changed = [];
+        $pks     = [];
         foreach (['jchoptimize', 'jchpagecache'] as $el) {
             if ($before[$el]['found'] && $before[$el]['enabled'] !== $enabled) {
                 $changed[] = $el;
+                $pks[]     = $before[$el]['id'];
             }
         }
 
         if ($changed !== []) {
-            $u = $db->getQuery(true)
-                ->update($db->quoteName('#__extensions'))
-                ->set($db->quoteName('enabled') . ' = ' . (int) $enabled)
-                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                ->where($db->quoteName('folder') . ' = ' . $db->quote('system'))
-                ->where($db->quoteName('element') . ' IN (' . implode(',', array_map([$db, 'quote'], $changed)) . ')');
-            $db->setQuery($u)->execute();
+            // Modèle « Plugin » de com_plugins (J5/J6) : ACL core.edit.state com_plugins (celle de
+            // l'outil), événement onContentChangeState, purge du cache com_plugins, journal des actions.
+            $model = Factory::getApplication()->bootComponent('com_plugins')
+                ->getMVCFactory()->createModel('Plugin', 'Administrator', ['ignore_request' => true]);
 
-            // La liste des plugins publiés est mise en cache : purger.
+            if (!ActionLogContext::run('com_plugins', static function () use ($model, &$pks, $enabled) {
+                return $model->publish($pks, (int) $enabled);
+            })) {
+                throw new McpToolException('Plugin state change failed: ' . implode(' | ', array_map(
+                    static fn ($e) => $e instanceof \Throwable ? $e->getMessage() : (string) $e,
+                    (array) $model->getErrors()
+                )));
+            }
+
+            // Purge complémentaire (best-effort) : com_plugins est déjà purgé par le modèle.
             foreach (['com_plugins', '_system'] as $g) {
                 try {
                     Factory::getCache($g)->clean();
@@ -836,16 +838,9 @@ final class SiteTools
     /** Le plugin Console de JCH (qui fournit la commande jchoptimize:recache) est-il actif ? */
     private function jchConsolePluginEnabled(): bool
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select('COUNT(*)')
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-            ->where($db->quoteName('folder') . ' = ' . $db->quote('console'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('jchoptimize'))
-            ->where($db->quoteName('enabled') . ' = 1');
+        $row = ExtensionHelper::getExtensionRecord('jchoptimize', 'plugin', null, 'console');
 
-        return (int) $db->setQuery($q)->loadResult() > 0;
+        return $row !== null && (int) $row->enabled === 1;
     }
 
     /** Binaire PHP CLI adapté (dérivé de PHP_BINARY côté FPM, sinon chemins Plesk usuels). */

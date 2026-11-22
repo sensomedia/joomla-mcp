@@ -8,13 +8,14 @@ namespace Sensomedia\Plugin\Sensomcp\Content\Tool;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Form;
+use Joomla\CMS\Table\ContentHistory;
 use Joomla\CMS\User\User;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\UrlGuard;
+use Sensomedia\Plugin\Sensomcp\Content\Support\SavesArticleModel;
 
 \defined('_JEXEC') or die;
 
@@ -25,6 +26,8 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\UrlGuard;
  */
 final class VersionTools
 {
+    use SavesArticleModel;
+
     private const TYPE_ALIAS = 'com_content.article';
 
     public function __construct(private User $user, private bool $allowWrite)
@@ -129,10 +132,53 @@ final class VersionTools
     }
 
     // ---------------------------------------------------------------------
+    // Tout passe par les classes du cœur, identiques en J5 et J6 :
+    //  - table Joomla\CMS\Table\ContentHistory (lecture d'une version) ;
+    //  - HistoryModel de com_contenthistory (liste, garder, supprimer) ;
+    //  - modèle Article de com_content (restauration via son save()).
+    // loadHistory() n'est PAS utilisé : sa signature et son effet diffèrent
+    // (J5 : bind dans la table ; J6 : save() direct, sans le formulaire, donc
+    // sans les verrous ACL de FormGate).
+    // ---------------------------------------------------------------------
 
-    private function db(): DatabaseInterface
+    /** Table #__history (classe du cœur, constructeur identique J5/J6). */
+    private function historyTable(): ContentHistory
     {
-        return Factory::getContainer()->get(DatabaseInterface::class);
+        return new ContentHistory(Factory::getContainer()->get(DatabaseInterface::class));
+    }
+
+    /** HistoryModel de com_contenthistory, sans lecture de la requête. */
+    private function historyModel()
+    {
+        return Factory::getApplication()->bootComponent('com_contenthistory')
+            ->getMVCFactory()->createModel('History', 'Administrator', ['ignore_request' => true]);
+    }
+
+    /**
+     * Exécute $fn en accordant au modèle d'historique le droit « edit.own » sur l'article.
+     *
+     * HistoryModel::canEdit() accepte core.edit sur l'asset, sinon il cherche l'id
+     * dans l'état utilisateur `com_content.edit.article.id` : c'est ce que pose le
+     * FormController du cœur (holdEditId) quand un auteur ouvre son article. Nos
+     * ACL d'outil ont déjà vérifié core.edit ou core.edit.own : on reproduit ce
+     * marquage le temps de l'appel, puis on restaure l'état précédent.
+     */
+    private function withEditHold(int $articleId, callable $fn): mixed
+    {
+        if ($this->user->authorise('core.edit', self::TYPE_ALIAS . '.' . $articleId)) {
+            return $fn();
+        }
+
+        $app      = Factory::getApplication();
+        $key      = 'com_content.edit.article.id';
+        $previous = $app->getUserState($key);
+        $app->setUserState($key, array_values(array_unique(array_merge((array) $previous, [$articleId]))));
+
+        try {
+            return $fn();
+        } finally {
+            $app->setUserState($key, $previous);
+        }
     }
 
     /** ACL : l'outil cible un article (`article_id`) → core.edit, ou core.edit.own pour l'auteur. */
@@ -171,13 +217,26 @@ final class VersionTools
 
     private function canEditArticle(User $me, int $articleId): bool
     {
-        $db = $this->db();
-        $by = (int) $db->setQuery(
-            $db->getQuery(true)->select($db->quoteName('created_by'))->from($db->quoteName('#__content'))
-                ->where($db->quoteName('id') . ' = :id')->bind(':id', $articleId, ParameterType::INTEGER)
-        )->loadResult();
+        $table = $this->articleModel()->getTable();
+        $by    = $table->load($articleId) ? (int) $table->created_by : 0;
 
-        return FormGate::canEdit($me, 'com_content.article.' . $articleId, $by);
+        return FormGate::canEdit($me, self::TYPE_ALIAS . '.' . $articleId, $by);
+    }
+
+    /** Version chargée (table du cœur), ou exception si absente. */
+    private function loadVersion(int $versionId): ContentHistory
+    {
+        if ($versionId <= 0) {
+            throw new McpToolException('A valid version_id is required.');
+        }
+
+        $table = $this->historyTable();
+
+        if (!$table->load($versionId)) {
+            throw new McpToolException('Version not found: ' . $versionId);
+        }
+
+        return $table;
     }
 
     /**
@@ -187,19 +246,7 @@ final class VersionTools
      */
     private function articleOfVersion(int $versionId): int
     {
-        if ($versionId <= 0) {
-            throw new McpToolException('A valid version_id is required.');
-        }
-
-        $db     = $this->db();
-        $itemId = (string) $db->setQuery(
-            $db->getQuery(true)->select($db->quoteName('item_id'))->from($db->quoteName('#__history'))
-                ->where($db->quoteName('version_id') . ' = :id')->bind(':id', $versionId, ParameterType::INTEGER)
-        )->loadResult();
-
-        if ($itemId === '') {
-            throw new McpToolException('Version not found: ' . $versionId);
-        }
+        $itemId = (string) $this->loadVersion($versionId)->item_id;
 
         if (!preg_match('/^' . preg_quote(self::TYPE_ALIAS, '/') . '\.(\d+)$/', $itemId, $m)) {
             throw new McpToolException('Version ' . $versionId . ' is not an article version.');
@@ -214,17 +261,42 @@ final class VersionTools
             throw new McpToolException("The 'article_id' parameter is required.");
         }
 
-        $itemId = self::TYPE_ALIAS . '.' . $articleId;
+        // HistoryModel : la requête suit le schéma de la version de Joomla
+        // (is_current n'existe qu'en J6). ignore_request → état posé à la main.
+        $model = $this->historyModel();
+        $model->setState('item_id', self::TYPE_ALIAS . '.' . $articleId);
+        $model->setState('list.ordering', 'h.save_date');
+        $model->setState('list.direction', 'DESC');
+        $model->setState('list.start', 0);
+        $model->setState('list.limit', 0);
 
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['version_id', 'version_note', 'save_date', 'editor_user_id', 'character_count', 'keep_forever', 'is_current']))
-            ->from($db->quoteName('#__history'))
-            ->where($db->quoteName('item_id') . ' = :item')
-            ->bind(':item', $itemId, ParameterType::STRING)
-            ->order($db->quoteName('save_date') . ' DESC');
+        $items = $this->withEditHold($articleId, static fn () => $model->getItems());
 
-        return ['article_id' => $articleId, 'versions' => $db->setQuery($q)->loadAssocList() ?: []];
+        if ($items === false) {
+            throw new McpToolException('Could not list versions: ' . $this->modelErrors($model));
+        }
+
+        $versions = [];
+
+        foreach ((array) $items as $item) {
+            $versions[] = [
+                'version_id'      => (int) $item->version_id,
+                'version_note'    => (string) $item->version_note,
+                'save_date'       => (string) $item->save_date,
+                'editor_user_id'  => (int) $item->editor_user_id,
+                'editor'          => (string) ($item->editor ?? ''),
+                'character_count' => (int) $item->character_count,
+                'keep_forever'    => (int) $item->keep_forever,
+                // J6 uniquement (colonne is_current) ; null en J5.
+                'is_current'      => isset($item->is_current) ? (int) $item->is_current : null,
+            ];
+        }
+
+        // Le modèle ne trie que par save_date (à la seconde) : départage stable par version_id,
+        // sinon des versions enregistrées dans la même seconde sortent dans un ordre aléatoire.
+        usort($versions, static fn (array $x, array $y): int => [$y['save_date'], $y['version_id']] <=> [$x['save_date'], $x['version_id']]);
+
+        return ['article_id' => $articleId, 'versions' => $versions];
     }
 
     private function getVersion(int $versionId): array
@@ -272,11 +344,10 @@ final class VersionTools
             throw new McpToolException('Version ' . $versionId . ' does not match its article (' . $id . ' ≠ ' . $articleId . ').');
         }
 
-        // On rejoue le snapshot via le modèle Administrator (déclenche events/workflow), en
-        // passant par le formulaire d'article : filtres de texte, état/dates réservés à
+        // On rejoue le snapshot via le modèle Administrator (déclenche events/workflow/historique),
+        // en passant par le formulaire d'article : filtres de texte, état/dates réservés à
         // core.edit.state, created_by à core.manage com_users — comme une modification (audit M5).
-        $model = Factory::getApplication()->bootComponent('com_content')
-            ->getMVCFactory()->createModel('Article', 'Administrator', ['ignore_request' => true]);
+        $model   = $this->articleModel();
         $current = $model->getItem($id);
 
         if (!$current || !$current->id) {
@@ -290,49 +361,44 @@ final class VersionTools
             throw new McpToolException('Could not load the article form.');
         }
 
-        $db   = $this->db();
-        $tags = array_map('strval', $db->setQuery(
-            $db->getQuery(true)->select($db->quoteName('tag_id'))->from($db->quoteName('#__contentitem_tag_map'))
-                ->where($db->quoteName('type_alias') . ' = ' . $db->quote(self::TYPE_ALIAS))
-                ->where($db->quoteName('content_item_id') . ' = :id')->bind(':id', $id, ParameterType::INTEGER)
-        )->loadColumn() ?: []);
-
-        // Les liens A/B/C (`urls`) sont restaurés hors formulaire, comme update_article les
-        // écrit (liens relatifs permis), avec le même nettoyage de schéma.
         $snapshot = array_intersect_key($data, array_flip([
             'id', 'title', 'alias', 'introtext', 'fulltext', 'catid', 'state', 'language', 'metadesc', 'metakey',
             'images', 'attribs', 'metadata', 'access', 'publish_up', 'publish_down', 'featured', 'created', 'created_by', 'created_by_alias', 'note',
         ]));
-        $snapshot['tags'] = $tags;
-        $gate    = FormGate::apply($form, $snapshot, FormGate::itemData($current), ['id', 'tags'], null, ['created', 'publish_up', 'publish_down']);
-        $data    = $gate['data'];
-        $ignored = $gate['ignored'];
-        unset($data['urls']);
 
-        if (!$model->save($data)) {
-            $errors = method_exists($model, 'getErrors') ? $model->getErrors() : [$model->getError()];
-            $errors = array_filter(array_map(static fn ($e) => $e instanceof \Throwable ? $e->getMessage() : (string) $e, $errors));
+        // Le snapshot stocke ces groupes en JSON (colonnes de la table) ; le formulaire les
+        // attend en tableaux, sinon le filtre les écarte et ils ne sont pas restaurés.
+        foreach (['images', 'attribs', 'metadata'] as $group) {
+            if (isset($snapshot[$group]) && \is_string($snapshot[$group])) {
+                $decoded = json_decode($snapshot[$group], true);
 
-            throw new McpToolException('Restore failed: ' . ($errors ? implode(' | ', $errors) : 'unknown error'));
+                if (\is_array($decoded)) {
+                    $snapshot[$group] = $decoded;
+                } else {
+                    unset($snapshot[$group]);
+                }
+            } elseif (isset($snapshot[$group]) && \is_object($snapshot[$group])) {
+                $snapshot[$group] = json_decode((string) json_encode($snapshot[$group]), true);
+            }
         }
 
-        $raw  = $this->versionData($versionId)['urls'] ?? null;
-        $raw  = \is_string($raw) ? (array) json_decode($raw, true) : (array) $raw;
+        // Tags actuels conservés (getItem() les fournit via TagsHelper::getTagIds) : sans la
+        // clé, l'observateur Tags les effacerait.
+        $snapshot['tags'] = array_values(array_filter(explode(',', (string) ($current->tags->tags ?? ''))));
 
-        if ($raw !== []) {
-            foreach (['a', 'b', 'c'] as $k) {
-                if (isset($raw['url' . $k]) && (string) $raw['url' . $k] !== '') {
-                    $raw['url' . $k] = UrlGuard::cleanEditorialLink((string) $raw['url' . $k], 'link ' . $k);
-                }
-            }
+        // Liens A/B/C : restaurés avec le reste par le modèle, après le même nettoyage de
+        // schéma qu'update_article (refus des schémas exécutables).
+        $urls = $this->snapshotUrls($data['urls'] ?? null);
 
-            $json = json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            $db->setQuery(
-                $db->getQuery(true)->update($db->quoteName('#__content'))
-                    ->set($db->quoteName('urls') . ' = :urls')
-                    ->where($db->quoteName('id') . ' = :id')
-                    ->bind(':urls', $json)->bind(':id', $id, ParameterType::INTEGER)
-            )->execute();
+        if ($urls !== null) {
+            $snapshot['urls'] = $urls;
+        }
+
+        $gate    = FormGate::apply($form, $snapshot, FormGate::itemData($current), ['id', 'tags'], null, ['created', 'publish_up', 'publish_down']);
+        $ignored = $gate['ignored'];
+
+        if (!$this->saveWithPostedUrls($model, $gate['data'], $urls)) {
+            throw new McpToolException('Restore failed: ' . $this->modelErrors($model));
         }
 
         $out = ['ok' => true, 'article_id' => $id, 'restored_from_version' => $versionId];
@@ -340,35 +406,65 @@ final class VersionTools
         return $ignored ? $out + ['ignored' => $ignored] : $out;
     }
 
+    /** Liens A/B/C d'un snapshot (JSON ou tableau), nettoyés ; null si absents. */
+    private function snapshotUrls($raw): ?array
+    {
+        $raw = \is_string($raw) ? json_decode($raw, true) : (\is_object($raw) ? (array) $raw : $raw);
+
+        if (!\is_array($raw) || $raw === []) {
+            return null;
+        }
+
+        foreach (['a', 'b', 'c'] as $k) {
+            if (isset($raw['url' . $k]) && (string) $raw['url' . $k] !== '') {
+                $raw['url' . $k] = UrlGuard::cleanEditorialLink((string) $raw['url' . $k], 'link ' . $k);
+            }
+        }
+
+        return array_map(static fn ($v) => (string) $v, $raw);
+    }
+
     private function keepVersion(int $versionId, bool $keep): array
     {
-        $this->articleOfVersion($versionId);
+        $articleId = $this->articleOfVersion($versionId);
 
-        $db  = $this->db();
-        $val = $keep ? 1 : 0;
-        $q   = $db->getQuery(true)
-            ->update($db->quoteName('#__history'))
-            ->set($db->quoteName('keep_forever') . ' = :v')
-            ->where($db->quoteName('version_id') . ' = :id')
-            ->bind(':v', $val, ParameterType::INTEGER)
-            ->bind(':id', $versionId, ParameterType::INTEGER);
+        // HistoryModel::keep() BASCULE le drapeau : on ne l'appelle que s'il doit changer.
+        if ((bool) $this->loadVersion($versionId)->keep_forever !== $keep) {
+            $model = $this->historyModel();
+            $pks   = [$versionId];
 
-        $db->setQuery($q)->execute();
+            // keep() élague en silence les versions refusées : on juge sur l'état relu.
+            $this->withEditHold($articleId, static fn () => $model->keep($pks));
 
-        return ['ok' => true, 'version_id' => $versionId, 'keep_forever' => (bool) $keep];
+            if ((bool) $this->loadVersion($versionId)->keep_forever !== $keep) {
+                throw new McpToolException('Keep forever change failed: ' . $this->modelErrors($model));
+            }
+        }
+
+        return ['ok' => true, 'version_id' => $versionId, 'keep_forever' => $keep];
     }
 
     private function deleteVersion(int $versionId): array
     {
-        $this->articleOfVersion($versionId);
+        $articleId = $this->articleOfVersion($versionId);
 
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->delete($db->quoteName('#__history'))
-            ->where($db->quoteName('version_id') . ' = :id')
-            ->bind(':id', $versionId, ParameterType::INTEGER);
+        // Comme le cœur : une version « garder pour toujours » n'est pas supprimable.
+        if ((int) $this->loadVersion($versionId)->keep_forever === 1) {
+            throw new McpToolException(
+                'Version ' . $versionId . ' is marked "keep forever" and cannot be deleted. '
+                . 'Unset it first with keep_article_version (keep=false).'
+            );
+        }
 
-        $db->setQuery($q)->execute();
+        $model = $this->historyModel();
+        $pks   = [$versionId];
+
+        // delete() élague aussi en silence : on juge sur la présence en base.
+        $this->withEditHold($articleId, static fn () => $model->delete($pks));
+
+        if ($this->historyTable()->load($versionId)) {
+            throw new McpToolException('Delete failed: ' . $this->modelErrors($model));
+        }
 
         return ['ok' => true, 'version_id' => $versionId, 'deleted' => true];
     }
@@ -376,37 +472,6 @@ final class VersionTools
     /** Snapshot décodé d'une version. */
     private function versionData(int $versionId): array
     {
-        if ($versionId <= 0) {
-            throw new McpToolException("A valid version_id is required.");
-        }
-
-        $db  = $this->db();
-        $q   = $db->getQuery(true)
-            ->select($db->quoteName('version_data'))
-            ->from($db->quoteName('#__history'))
-            ->where($db->quoteName('version_id') . ' = :id')
-            ->bind(':id', $versionId, ParameterType::INTEGER);
-
-        $raw = $db->setQuery($q)->loadResult();
-
-        if ($raw === null) {
-            throw new McpToolException('Version not found: ' . $versionId);
-        }
-
-        return (array) json_decode((string) $raw, true);
-    }
-
-    private function assertVersionExists(int $versionId): void
-    {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName('version_id'))
-            ->from($db->quoteName('#__history'))
-            ->where($db->quoteName('version_id') . ' = :id')
-            ->bind(':id', $versionId, ParameterType::INTEGER);
-
-        if (!$db->setQuery($q, 0, 1)->loadResult()) {
-            throw new McpToolException('Version not found: ' . $versionId);
-        }
+        return (array) json_decode((string) $this->loadVersion($versionId)->version_data, true);
     }
 }

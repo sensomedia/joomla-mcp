@@ -156,6 +156,9 @@ final class BearerAuthenticator
      */
     private function tokenSeed(int $uid): array
     {
+        // EXCEPTION SQL assumée : le cœur n'expose aucune API pour lire la graine d'un jeton d'API.
+        // plg_api-authentication_token et plg_user_token lisent eux-mêmes #__user_profiles de la même
+        // façon (clés joomlatoken.token / joomlatoken.enabled).
         $db    = Factory::getContainer()->get(DatabaseInterface::class);
         $query = $db->getQuery(true)
             ->select($db->quoteName(['profile_key', 'profile_value']))
@@ -173,20 +176,14 @@ final class BearerAuthenticator
 
     private function userIsUsable(int $uid): bool
     {
-        $db    = Factory::getContainer()->get(DatabaseInterface::class);
-        $query = $db->getQuery(true)
-            ->select($db->quoteName(['block', 'activation']))
-            ->from($db->quoteName('#__users'))
-            ->where($db->quoteName('id') . ' = :uid')
-            ->bind(':uid', $uid, ParameterType::INTEGER);
+        // UserFactory du cœur (J5/J6) : compte existant, non bloqué, activé.
+        $user = Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById($uid);
 
-        $row = $db->setQuery($query)->loadObject();
-
-        if (!$row || (int) $row->block === 1) {
+        if ((int) $user->id !== $uid || $uid <= 0 || (int) $user->block === 1) {
             return false;
         }
 
         // activation vide, '0' ou null = compte actif.
-        return \in_array((string) $row->activation, ['', '0'], true);
+        return \in_array((string) $user->activation, ['', '0'], true);
     }
 }

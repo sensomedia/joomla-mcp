@@ -7,6 +7,7 @@
 namespace Sensomedia\Component\Sensomcp\Administrator\Helper;
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\Table\UpdateSite;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 
@@ -25,41 +26,34 @@ final class UpdateSitesHelper
     public static function sync(): void
     {
         try {
-            $db = Factory::getContainer()->get(DatabaseInterface::class);
-
             // Clé de licence (lue en direct, non cachée).
-            $params = json_decode((string) $db->setQuery(
-                $db->getQuery(true)
-                    ->select($db->quoteName('params'))
-                    ->from($db->quoteName('#__extensions'))
-                    ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-                    ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'))
-            )->loadResult(), true) ?: [];
-
-            $key    = trim((string) ($params['license_key'] ?? ''));
+            $key    = trim((string) (ComponentParams::get()['license_key'] ?? ''));
             $domain = Uri::getInstance()->getHost();
             $extra  = $key !== '' ? 'dlid=' . rawurlencode($key) . '&domain=' . rawurlencode($domain) : '';
 
-            // Update sites des plugins du groupe sensomcp.
-            $ids = $db->setQuery(
-                $db->getQuery(true)
-                    ->select('DISTINCT ' . $db->quoteName('se.update_site_id'))
-                    ->from($db->quoteName('#__update_sites_extensions', 'se'))
-                    ->join('INNER', $db->quoteName('#__extensions', 'e') . ' ON ' . $db->quoteName('e.extension_id') . ' = ' . $db->quoteName('se.extension_id'))
-                    ->where($db->quoteName('e.folder') . ' = ' . $db->quote('sensomcp'))
-                    ->where($db->quoteName('e.type') . ' = ' . $db->quote('plugin'))
-            )->loadColumn() ?: [];
+            // Update sites des plugins du groupe sensomcp : modèle « Updatesites » de com_installer
+            // (J5/J6, lecture sans ACL), filtré sur les plugins du dossier sensomcp.
+            $list = Factory::getApplication()->bootComponent('com_installer')
+                ->getMVCFactory()->createModel('Updatesites', 'Administrator', ['ignore_request' => true]);
+            $list->setState('filter.type', 'plugin');
+            $list->setState('filter.folder', 'sensomcp');
+            $list->setState('filter.enabled', '');
+            $list->setState('list.ordering', 'update_site_id');
+            $list->setState('list.direction', 'ASC');
+            $list->setState('list.start', 0);
+            $list->setState('list.limit', 0);
 
-            if ($ids === []) {
-                return;
+            $ids = array_values(array_unique(array_map(static fn ($i) => (int) $i->update_site_id, (array) $list->getItems())));
+
+            // Écriture : table « UpdateSite » du cœur, seulement si la valeur change.
+            foreach ($ids as $id) {
+                $site = new UpdateSite(Factory::getContainer()->get(DatabaseInterface::class));
+
+                if ($site->load($id) && (string) $site->extra_query !== $extra) {
+                    $site->extra_query = $extra;
+                    $site->store();
+                }
             }
-
-            $db->setQuery(
-                $db->getQuery(true)
-                    ->update($db->quoteName('#__update_sites'))
-                    ->set($db->quoteName('extra_query') . ' = ' . $db->quote($extra))
-                    ->whereIn($db->quoteName('update_site_id'), array_map('intval', $ids))
-            )->execute();
         } catch (\Throwable) {
             // best-effort
         }

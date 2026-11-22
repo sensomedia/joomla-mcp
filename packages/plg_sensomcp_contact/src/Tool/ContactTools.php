@@ -6,13 +6,16 @@
 
 namespace Sensomedia\Plugin\Sensomcp\Contact\Tool;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Form;
+use Joomla\CMS\Helper\TagsHelper;
 use Joomla\CMS\Router\Route;
+use Joomla\CMS\Table\Category as CategoryTable;
 use Joomla\CMS\User\User;
+use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Component\Fields\Administrator\Helper\FieldsHelper;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
 use Joomla\Registry\Registry;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ActionLogContext;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
@@ -233,6 +236,12 @@ final class ContactTools
 
     // ------------------------------------------------------------------ lecture
 
+    /**
+     * EXCEPTION SQL assumée (décision Fred, 22/11/2026) : le modèle Contacts du back-office ne sait pas
+     * chercher dans le poste / l'e-mail, filtrer par utilisateur lié, trier par clics ou modification, ni
+     * lister « tout sauf la corbeille » (archivés inclus) ; ses filtres ne s'étendent pas sans casser la
+     * pagination. Lecture seule ; toutes les écritures passent par ContactModel.
+     */
     private function listContacts(array $a): array
     {
         [$offset, $limit] = Pagination::bounds($a, 20, 100);
@@ -351,31 +360,44 @@ final class ContactTools
         return $out;
     }
 
+    /**
+     * Catégories com_contact (hors corbeille) via le modèle « Categories » de com_categories (J5/J6).
+     * Le nombre de contacts vient de son countItems() (comptes par état fournis par le composant) :
+     * publiés + dépubliés + archivés, comme avant (corbeille exclue).
+     */
     private function listCategories(): array
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['c.id', 'c.title', 'c.alias', 'c.path', 'c.level', 'c.parent_id', 'c.published', 'c.language', 'c.access']))
-            ->select('(SELECT COUNT(*) FROM ' . $db->quoteName('#__contact_details', 'd') . ' WHERE '
-                . $db->quoteName('d.catid') . ' = ' . $db->quoteName('c.id') . ' AND ' . $db->quoteName('d.published') . ' <> -2) AS '
-                . $db->quoteName('contacts'))
-            ->from($db->quoteName('#__categories', 'c'))
-            ->where($db->quoteName('c.extension') . ' = ' . $db->quote(self::EXT))
-            ->where($db->quoteName('c.published') . ' <> -2')
-            ->order($db->quoteName('c.lft') . ' ASC');
+        $model = Factory::getApplication()->bootComponent('com_categories')
+            ->getMVCFactory()->createModel('Categories', 'Administrator', ['ignore_request' => true]);
+        $model->setState('filter.extension', self::EXT);
+        $model->setState('filter.published', '*');
+        $model->setState('list.ordering', 'a.lft');
+        $model->setState('list.direction', 'ASC');
+        $model->setState('list.start', 0);
+        $model->setState('list.limit', 0);
 
-        return ['categories' => array_map(static fn (array $r) => [
-            'id'        => (int) $r['id'],
-            'title'     => (string) $r['title'],
-            'alias'     => (string) $r['alias'],
-            'path'      => (string) $r['path'],
-            'level'     => (int) $r['level'],
-            'parent_id' => (int) $r['parent_id'],
-            'state'     => self::STATES[(int) $r['published']] ?? (string) $r['published'],
-            'language'  => (string) $r['language'],
-            'access'    => (int) $r['access'],
-            'contacts'  => (int) $r['contacts'],
-        ], $db->setQuery($q)->loadAssocList())];
+        $out = [];
+
+        foreach ((array) $model->getItems() as $c) {
+            if ((int) $c->published === -2) {
+                continue;
+            }
+
+            $out[] = [
+                'id'        => (int) $c->id,
+                'title'     => (string) $c->title,
+                'alias'     => (string) $c->alias,
+                'path'      => (string) $c->path,
+                'level'     => (int) $c->level,
+                'parent_id' => (int) $c->parent_id,
+                'state'     => self::STATES[(int) $c->published] ?? (string) $c->published,
+                'language'  => (string) $c->language,
+                'access'    => (int) $c->access,
+                'contacts'  => (int) ($c->count_published ?? 0) + (int) ($c->count_unpublished ?? 0) + (int) ($c->count_archived ?? 0),
+            ];
+        }
+
+        return ['categories' => $out];
     }
 
     // ----------------------------------------------------------------- écriture
@@ -732,15 +754,17 @@ final class ContactTools
             : '"catid" is required: the Contacts component has several categories (see list_contact_categories).');
     }
 
+    /** Catégorie (table Category du cœur) de l'extension com_contact ? null si absente. */
+    private function category(int $id): ?CategoryTable
+    {
+        $table = new CategoryTable(Factory::getContainer()->get(DatabaseInterface::class));
+
+        return ($id > 0 && $table->load($id)) ? $table : null;
+    }
+
     private function isContactCategory(int $id): bool
     {
-        $db = $this->db();
-
-        return (bool) $db->setQuery(
-            $db->getQuery(true)->select('1')->from($db->quoteName('#__categories'))
-                ->where($db->quoteName('id') . ' = ' . $id)
-                ->where($db->quoteName('extension') . ' = ' . $db->quote(self::EXT))
-        )->loadResult();
+        return (string) ($this->category($id)->extension ?? '') === self::EXT;
     }
 
     /** Droit d'édition d'un contact : core.edit sur sa catégorie, ou core.edit.own pour son auteur. */
@@ -790,17 +814,14 @@ final class ContactTools
     private function tagSummary(object $item): array
     {
         $ids = $this->currentTagIds($item);
+        $out = [];
 
-        if ($ids === []) {
-            return [];
+        // TagsHelper::getTags() (J5/J6) : id => titre des tags existants, tous états.
+        foreach ($ids ? (new TagsHelper())->getTags(array_map('intval', $ids)) : [] as $tid => $title) {
+            $out[] = ['id' => (int) $tid, 'title' => (string) $title];
         }
 
-        $db = $this->db();
-
-        return array_map(static fn (array $r) => ['id' => (int) $r['id'], 'title' => (string) $r['title']], $db->setQuery(
-            $db->getQuery(true)->select($db->quoteName(['id', 'title']))->from($db->quoteName('#__tags'))
-                ->whereIn($db->quoteName('id'), array_map('intval', $ids))
-        )->loadAssocList());
+        return $out;
     }
 
     /** @return string[] */
@@ -821,12 +842,17 @@ final class ContactTools
             return [];
         }
 
-        $db    = $this->db();
-        $found = $db->setQuery(
-            $db->getQuery(true)->select($db->quoteName('id'))->from($db->quoteName('#__tags'))
-                ->whereIn($db->quoteName('id'), $ids)->where($db->quoteName('published') . ' <> -2')
-        )->loadColumn();
-        $missing = array_diff($ids, array_map('intval', $found));
+        // Table Tag de com_tags (J5/J6) : tag existant et hors corbeille.
+        $table = Factory::getApplication()->bootComponent('com_tags')->getMVCFactory()->createTable('Tag', 'Administrator');
+        $found = [];
+
+        foreach ($ids as $tid) {
+            if ($table->load($tid) && (int) $table->published !== -2) {
+                $found[] = $tid;
+            }
+        }
+
+        $missing = array_diff($ids, $found);
 
         if ($missing !== []) {
             throw new McpToolException('Unknown tag id(s): ' . implode(', ', $missing) . ' (tags must exist; see list_tags).');
@@ -837,41 +863,38 @@ final class ContactTools
 
     private function userSummary(int $id): ?array
     {
-        $db  = $this->db();
-        $row = $db->setQuery(
-            $db->getQuery(true)->select($db->quoteName(['id', 'name', 'username']))->from($db->quoteName('#__users'))
-                ->where($db->quoteName('id') . ' = ' . $id)
-        )->loadAssoc();
+        $user = Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById($id);
 
-        return $row ? ['id' => (int) $row['id'], 'name' => (string) $row['name'], 'username' => (string) $row['username']] : ['id' => $id, 'missing' => true];
+        return (int) $user->id === $id
+            ? ['id' => $id, 'name' => (string) $user->name, 'username' => (string) $user->username]
+            : ['id' => $id, 'missing' => true];
     }
 
     private function categoryTitle(int $id): string
     {
-        $db = $this->db();
-
-        return (string) $db->setQuery(
-            $db->getQuery(true)->select($db->quoteName('title'))->from($db->quoteName('#__categories'))->where($db->quoteName('id') . ' = ' . $id)
-        )->loadResult();
+        return (string) ($this->category($id)->title ?? '');
     }
 
     /** @return array<int, array> */
     private function rowsById(array $ids): array
     {
-        if ($ids === []) {
-            return [];
-        }
+        // Table du modèle Contact (J5/J6), une ligne par id (≤ MAX_IDS).
+        $table = $this->model()->getTable();
+        $out   = [];
 
-        $db  = $this->db();
-        $out = [];
-
-        foreach ($db->setQuery(
-            $db->getQuery(true)
-                ->select($db->quoteName(['id', 'name', 'alias', 'catid', 'published', 'featured', 'language', 'created_by']))
-                ->from($db->quoteName('#__contact_details'))
-                ->whereIn($db->quoteName('id'), $ids, ParameterType::INTEGER)
-        )->loadAssocList() as $r) {
-            $out[(int) $r['id']] = $r;
+        foreach ($ids as $id) {
+            if ($table->load((int) $id)) {
+                $out[(int) $id] = [
+                    'id'         => (int) $table->id,
+                    'name'       => (string) $table->name,
+                    'alias'      => (string) $table->alias,
+                    'catid'      => (int) $table->catid,
+                    'published'  => (int) $table->published,
+                    'featured'   => (int) $table->featured,
+                    'language'   => (string) $table->language,
+                    'created_by' => (int) $table->created_by,
+                ];
+            }
         }
 
         return $out;
@@ -960,17 +983,7 @@ final class ContactTools
 
     private function componentEnabled(): bool
     {
-        $db = $this->db();
-
-        try {
-            return (int) $db->setQuery(
-                $db->getQuery(true)->select($db->quoteName('enabled'))->from($db->quoteName('#__extensions'))
-                    ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-                    ->where($db->quoteName('element') . ' = ' . $db->quote(self::EXT))
-            )->loadResult() === 1;
-        } catch (\Throwable) {
-            return false;
-        }
+        return ComponentHelper::isEnabled(self::EXT);
     }
 
     private function db(): DatabaseInterface

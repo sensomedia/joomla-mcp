@@ -8,9 +8,10 @@ namespace Sensomedia\Plugin\Sensomcp\Content\Tool;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Form;
+use Joomla\CMS\Table\Category as CategoryTable;
 use Joomla\CMS\User\User;
+use Joomla\Component\Content\Site\Helper\RouteHelper;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
 use Joomla\Registry\Registry;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ActionLogContext;
@@ -184,11 +185,6 @@ final class CategoryTools
 
     // ---------------------------------------------------------------------
 
-    private function db(): DatabaseInterface
-    {
-        return Factory::getContainer()->get(DatabaseInterface::class);
-    }
-
     /** Valeurs de champs personnalisés du contexte com_content.categories. */
     private function fields(): FieldsSupport
     {
@@ -242,32 +238,66 @@ final class CategoryTools
         return $form;
     }
 
-    /**
-     * Restreint une requête #__categories aux catégories visibles par l'utilisateur
-     * du jeton : niveaux d'accès autorisés + publiées seulement sauf éditeur. §5 ACL.
-     */
-    private function applyReadAcl($db, $q): void
+    /** L'utilisateur du jeton peut-il voir les catégories non publiées ? (éditeur) */
+    private function canSeeUnpublished(): bool
     {
-        $levels = $this->user->getAuthorisedViewLevels() ?: [1];
-        $q->whereIn($db->quoteName('access'), array_map('intval', $levels));
+        return $this->user->authorise('core.edit', 'com_content')
+            || $this->user->authorise('core.edit.state', 'com_content');
+    }
 
-        if (!$this->user->authorise('core.edit', 'com_content')
-            && !$this->user->authorise('core.edit.state', 'com_content')) {
-            $q->where($db->quoteName('published') . ' = 1');
-        }
+    /**
+     * Catégories com_content via le modèle Administrator « Categories » (celui de la
+     * liste du back-office, J5/J6) : filtre d'extension, niveaux d'accès de
+     * l'utilisateur, ordre de l'arbre (lft). Racine exclue (extension « system »).
+     *
+     * @param string $published '1' ou '*' (tous états)
+     *
+     * @return list<object>
+     */
+    private function categoryItems(string $published): array
+    {
+        $model = Factory::getApplication()->bootComponent('com_categories')
+            ->getMVCFactory()->createModel('Categories', 'Administrator', ['ignore_request' => true]);
+
+        $model->setState('filter.extension', self::EXTENSION);
+        $model->setState('filter.published', $published);
+        $model->setState('list.ordering', 'a.lft');
+        $model->setState('list.direction', 'ASC');
+        $model->setState('list.start', 0);
+        $model->setState('list.limit', 0);
+
+        return (array) $model->getItems();
     }
 
     private function listCategories(): array
     {
-        $db    = $this->db();
-        $query = $db->getQuery(true)
-            ->select($db->quoteName(['id', 'title', 'level', 'path', 'language', 'parent_id']))
-            ->from($db->quoteName('#__categories'))
-            ->where($db->quoteName('extension') . ' = ' . $db->quote(self::EXTENSION))
-            ->order($db->quoteName('lft') . ' ASC');
-        $this->applyReadAcl($db, $query);
+        $out = [];
 
-        return ['categories' => $db->setQuery($query)->loadAssocList()];
+        // §5 ACL : publiées seulement, sauf éditeur (tous états).
+        foreach ($this->categoryItems($this->canSeeUnpublished() ? '*' : '1') as $c) {
+            $out[] = [
+                'id'        => (int) $c->id,
+                'title'     => (string) $c->title,
+                'level'     => (int) $c->level,
+                'path'      => (string) $c->path,
+                'language'  => (string) $c->language,
+                'parent_id' => (int) $c->parent_id,
+            ];
+        }
+
+        return ['categories' => $out];
+    }
+
+    /** Catégorie com_content via CategoryModel::getItem() (null si absente ou d'une autre extension). */
+    private function loadCategory(int $id): ?object
+    {
+        if ($id <= 0) {
+            return null;
+        }
+
+        $item = $this->model()->getItem($id);
+
+        return ($item && !empty($item->id) && (string) $item->extension === self::EXTENSION) ? $item : null;
     }
 
     private function getCategory(int $id): array
@@ -276,22 +306,28 @@ final class CategoryTools
             throw new McpToolException("The 'id' parameter is required.");
         }
 
-        $db  = $this->db();
-        $q   = $db->getQuery(true)
-            ->select($db->quoteName(['id', 'title', 'alias', 'parent_id', 'level', 'path', 'published', 'language', 'description']))
-            ->from($db->quoteName('#__categories'))
-            ->where($db->quoteName('id') . ' = :id')
-            ->where($db->quoteName('extension') . ' = ' . $db->quote(self::EXTENSION))
-            ->bind(':id', $id, ParameterType::INTEGER);
-        $this->applyReadAcl($db, $q);
+        $item   = $this->loadCategory($id);
+        $levels = array_map('intval', $this->user->getAuthorisedViewLevels() ?: [1]);
 
-        $row = $db->setQuery($q)->loadAssoc();
-
-        if (!$row) {
+        // §5 ACL : niveau d'accès + publiée seulement sauf éditeur ; même réponse « introuvable ».
+        if (!$item || !\in_array((int) $item->access, $levels, true)
+            || ((int) $item->published !== 1 && !$this->canSeeUnpublished())) {
             throw new McpToolException('Category not found: ' . $id);
         }
 
-        $row           = $this->withCategoryUrls($row, $id);
+        $row = [
+            'id'          => (int) $item->id,
+            'title'       => (string) $item->title,
+            'alias'       => (string) $item->alias,
+            'parent_id'   => (int) $item->parent_id,
+            'level'       => (int) $item->level,
+            'path'        => (string) $item->path,
+            'published'   => (int) $item->published,
+            'language'    => (string) $item->language,
+            'description' => (string) $item->description,
+        ];
+
+        $row           = $this->withCategoryUrls($row, $item);
         $row['fields'] = $this->fields()->valuesFor($id, $id);
 
         return $row;
@@ -299,36 +335,23 @@ final class CategoryTools
 
     /**
      * Injecte `url` (+ `urls` multilingue) pour une catégorie com_content, via le
-     * trait partagé {@see ResolvesPublicUrls}.
+     * trait partagé {@see ResolvesPublicUrls}. Lien interne de RouteHelper::getCategoryRoute()
+     * du cœur, SANS langue (le trait l'ajoute par langue de contenu active).
      *
      * @param array<string,mixed> $result
      * @return array<string,mixed>
      */
-    private function withCategoryUrls(array $result, int $id): array
+    private function withCategoryUrls(array $result, ?object $item): array
     {
-        try {
-            $db  = $this->db();
-            $row = $db->setQuery(
-                $db->getQuery(true)
-                    ->select($db->quoteName(['id', 'alias', 'language']))
-                    ->from($db->quoteName('#__categories'))
-                    ->where($db->quoteName('id') . ' = :id')
-                    ->bind(':id', $id, ParameterType::INTEGER)
-            )->loadObject();
-        } catch (\Throwable) {
-            $row = null;
-        }
-
-        if (!$row) {
+        if (!$item) {
             $result['url'] = '';
 
             return $result;
         }
 
-        $slug = $row->id . (($row->alias ?? '') !== '' ? ':' . $row->alias : '');
-        $base = 'index.php?option=com_content&view=category&id=' . $slug;
+        $public = $this->isPubliclyVisible((int) $item->published, (int) $item->access);
 
-        return $this->withPublicUrls($result, $base, (string) $row->language);
+        return $this->withPublicUrls($result, RouteHelper::getCategoryRoute((int) $item->id), (string) $item->language, $public);
     }
 
     private function createCategory(array $a): array
@@ -379,7 +402,7 @@ final class CategoryTools
         }
 
         $catid  = (int) $model->getState('category.id');
-        $result = $this->withCategoryUrls(['ok' => true, 'id' => $catid, 'title' => $title], $catid);
+        $result = $this->withCategoryUrls(['ok' => true, 'id' => $catid, 'title' => $title], $this->loadCategory($catid));
 
         if ($gate['ignored']) {
             $result['ignored'] = $gate['ignored'];
@@ -468,7 +491,7 @@ final class CategoryTools
             throw new McpToolException('Update failed: ' . $this->modelErrors($model));
         }
 
-        $result = $this->withCategoryUrls(['ok' => true, 'id' => $id], $id);
+        $result = $this->withCategoryUrls(['ok' => true, 'id' => $id], $this->loadCategory($id));
 
         if ($gate['ignored']) {
             $result['ignored'] = $gate['ignored'];
@@ -585,37 +608,39 @@ final class CategoryTools
         return ['ok' => true, 'id' => $id, 'parent_id' => $parentId, 'order' => $this->siblingOrder($parentId)];
     }
 
-    /** Ordre courant (par lft) des catégories directes sous un parent. */
+    /**
+     * Ordre courant (par lft) des catégories directes sous un parent, pour la réponse de
+     * reorder_category (informatif : le déplacement lui-même passe par moveByReference()).
+     * Lu via le modèle Categories, donc limité aux catégories visibles par l'utilisateur.
+     */
     private function siblingOrder(int $parentId): array
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName('id'))
-            ->from($db->quoteName('#__categories'))
-            ->where($db->quoteName('extension') . ' = ' . $db->quote(self::EXTENSION))
-            ->where($db->quoteName('parent_id') . ' = :parent')
-            ->where($db->quoteName('published') . ' >= 0')
-            ->order($db->quoteName('lft') . ' ASC')
-            ->bind(':parent', $parentId, ParameterType::INTEGER);
+        $out = [];
 
-        return array_map('intval', $db->setQuery($q)->loadColumn());
-    }
-
-    /** Sous-ensemble des ids encore présents en base (extension com_content). */
-    private function existingIds(array $ids): array
-    {
-        if (!$ids) {
-            return [];
+        foreach ($this->categoryItems('*') as $c) {
+            if ((int) $c->parent_id === $parentId && (int) $c->published >= 0) {
+                $out[] = (int) $c->id;
+            }
         }
 
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName('id'))
-            ->from($db->quoteName('#__categories'))
-            ->whereIn($db->quoteName('id'), $ids)
-            ->where($db->quoteName('extension') . ' = ' . $db->quote(self::EXTENSION));
+        return $out;
+    }
 
-        return array_map('intval', $db->setQuery($q)->loadColumn());
+    /** Sous-ensemble des ids encore présents (table Category du cœur, extension com_content). */
+    private function existingIds(array $ids): array
+    {
+        $out   = [];
+        $table = new CategoryTable(Factory::getContainer()->get(DatabaseInterface::class));
+
+        foreach ($ids as $id) {
+            if ($table->load((int) $id) && (string) $table->extension === self::EXTENSION) {
+                $out[] = (int) $id;
+            }
+
+            $table->reset();
+        }
+
+        return $out;
     }
 
     private function modelErrors($model): string

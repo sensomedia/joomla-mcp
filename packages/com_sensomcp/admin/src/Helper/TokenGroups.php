@@ -8,16 +8,15 @@ namespace Sensomedia\Component\Sensomcp\Administrator\Helper;
 
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Helper\UserGroupsHelper;
 use Joomla\CMS\User\UserFactoryInterface;
-use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
 
 \defined('_JEXEC') or die;
 
 /**
  * Groupes autorisés à utiliser un jeton API Joomla : paramètre `allowedUserGroups`
- * du plugin « User - Joomla API Token » (plg_user_token), lu et écrit directement en
- * base (le plugin peut être désactivé, PluginHelper ne le renverrait pas).
+ * du plugin « User - Joomla API Token » (plg_user_token), lu et écrit par la table « Extension »
+ * du cœur ({@see ExtensionRecords} : le plugin peut être désactivé, PluginHelper ne le renverrait pas).
  *
  * Mêmes règles que le cœur Joomla (plg_user_token / plg_api-authentication_token) :
  * réglage absent → [8] (Super Users) ; liste vide → tous les groupes autorisés.
@@ -45,18 +44,15 @@ final class TokenGroups
     /** @param int[] $groups */
     public static function set(array $groups): void
     {
-        $params                      = self::params();
+        $row = ExtensionRecords::plugin('user', 'token');
+
+        if (!$row) {
+            return;
+        }
+
+        $params                      = ExtensionRecords::params($row);
         $params['allowedUserGroups'] = array_values(array_map('strval', array_unique(array_map('intval', $groups))));
-
-        $db   = self::db();
-        $json = (string) json_encode($params);
-        $q    = $db->getQuery(true)
-            ->update($db->quoteName('#__extensions'))
-            ->set($db->quoteName('params') . ' = :params')
-            ->where(self::where($db))
-            ->bind(':params', $json, ParameterType::STRING);
-
-        $db->setQuery($q)->execute();
+        ExtensionRecords::setParams($row, $params);
 
         foreach (['com_plugins', '_system'] as $group) {
             try {
@@ -76,15 +72,15 @@ final class TokenGroups
      */
     public static function forbidden(): array
     {
-        $db   = self::db();
-        $root = $db->setQuery(
-            $db->getQuery(true)
-                ->select($db->quoteName('id'))
-                ->from($db->quoteName('#__usergroups'))
-                ->where($db->quoteName('parent_id') . ' = 0')
-        )->loadColumn();
+        // Groupes racine (parent_id = 0) : UserGroupsHelper du cœur.
+        $ids = [];
 
-        $ids   = array_map('intval', $root);
+        foreach (UserGroupsHelper::getInstance()->getAll() as $group) {
+            if ((int) $group->parent_id === 0) {
+                $ids[] = (int) $group->id;
+            }
+        }
+
         $ids[] = (int) ComponentHelper::getParams('com_users')->get('guest_usergroup', 9);
 
         return array_values(array_unique(array_filter($ids)));
@@ -110,26 +106,6 @@ final class TokenGroups
 
     private static function params(): array
     {
-        $db = self::db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName('params'))
-            ->from($db->quoteName('#__extensions'))
-            ->where(self::where($db));
-
-        return json_decode((string) $db->setQuery($q)->loadResult(), true) ?: [];
-    }
-
-    private static function where(DatabaseInterface $db): array
-    {
-        return [
-            $db->quoteName('type') . ' = ' . $db->quote('plugin'),
-            $db->quoteName('folder') . ' = ' . $db->quote('user'),
-            $db->quoteName('element') . ' = ' . $db->quote('token'),
-        ];
-    }
-
-    private static function db(): DatabaseInterface
-    {
-        return Factory::getContainer()->get(DatabaseInterface::class);
+        return ExtensionRecords::params(ExtensionRecords::plugin('user', 'token'));
     }
 }

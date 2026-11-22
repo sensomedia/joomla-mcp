@@ -8,7 +8,7 @@ namespace Sensomedia\Component\Sensomcp\Api\Mcp;
 
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
+use Joomla\CMS\Table\Category;
 use Joomla\CMS\User\User;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
@@ -24,9 +24,17 @@ final class ResourceProvider
 {
     private const MAX = 50;
 
-    private function db(): DatabaseInterface
+    /** Modèle Administrator de com_content (J5/J6), exécuté avec les droits du porteur du jeton. */
+    private function contentModel(string $name)
     {
-        return Factory::getContainer()->get(DatabaseInterface::class);
+        $model = Factory::getApplication()->bootComponent('com_content')
+            ->getMVCFactory()->createModel($name, 'Administrator', ['ignore_request' => true]);
+
+        if ($this->user !== null && method_exists($model, 'setCurrentUser')) {
+            $model->setCurrentUser($this->user);
+        }
+
+        return $model;
     }
 
     /** @return list<array{uri:string, name:string, description:string, mimeType:string}> */
@@ -44,21 +52,30 @@ final class ResourceProvider
         return $this->scopes === null || \in_array('*', $this->scopes, true) || \in_array('content.read', $this->scopes, true);
     }
 
-    /** Filtre « article visible par le porteur » : publié, dates, catégorie publiée, niveau d'accès. */
-    private function applyReadAcl($db, $q): void
+    /**
+     * Article « visible par le porteur » : publié, dans ses dates de publication, catégorie publiée,
+     * niveaux d'accès de l'article et de sa catégorie (porteur null = pas de contrôle d'accès).
+     * Le modèle Articles du back-office ne filtre ni les dates ni l'état de la catégorie : contrôle ici.
+     */
+    private function isVisible(object $a, ?int $categoryPublished, ?int $categoryAccess): bool
     {
-        $now = $db->quote(Factory::getDate()->toSql());
+        $now = Factory::getDate()->toSql();
 
-        $q->where($db->quoteName('a.state') . ' = 1')
-            ->where('(' . $db->quoteName('a.publish_up') . ' IS NULL OR ' . $db->quoteName('a.publish_up') . ' <= ' . $now . ')')
-            ->where('(' . $db->quoteName('a.publish_down') . ' IS NULL OR ' . $db->quoteName('a.publish_down') . ' >= ' . $now . ')')
-            ->join('LEFT', $db->quoteName('#__categories', 'c'), $db->quoteName('c.id') . ' = ' . $db->quoteName('a.catid'))
-            ->where('(' . $db->quoteName('c.id') . ' IS NULL OR ' . $db->quoteName('c.published') . ' = 1)');
-
-        if ($this->user !== null) {
-            $levels = array_map('intval', $this->user->getAuthorisedViewLevels() ?: [1]);
-            $q->whereIn($db->quoteName('a.access'), $levels);
+        if ((int) $a->state !== 1
+            || (!empty($a->publish_up) && (string) $a->publish_up > $now)
+            || (!empty($a->publish_down) && (string) $a->publish_down < $now)
+            || ($categoryPublished !== null && $categoryPublished !== 1)) {
+            return false;
         }
+
+        if ($this->user === null) {
+            return true;
+        }
+
+        $levels = array_map('intval', $this->user->getAuthorisedViewLevels() ?: [1]);
+
+        return \in_array((int) $a->access, $levels, true)
+            && ($categoryAccess === null || \in_array($categoryAccess, $levels, true));
     }
 
     public function list(): array
@@ -70,23 +87,36 @@ final class ResourceProvider
             return $plugin;
         }
 
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['a.id', 'a.title']))
-            ->from($db->quoteName('#__content', 'a'))
-            ->order($db->quoteName('a.created') . ' DESC');
-        $this->applyReadAcl($db, $q);
+        // Modèle Articles du back-office (publiés, niveaux d'accès de l'article et de la catégorie pour
+        // le porteur), par pages, jusqu'à MAX articles visibles (dates / catégorie filtrées ici).
+        $out   = [];
+        $start = 0;
+        $page  = 100;
 
-        $out = [];
+        do {
+            $model = $this->contentModel('Articles');
+            $model->setState('filter.published', '1');
+            $model->setState('list.ordering', 'a.created');
+            $model->setState('list.direction', 'DESC');
+            $model->setState('list.start', $start);
+            $model->setState('list.limit', $page);
+            $items = (array) $model->getItems();
 
-        foreach ($db->setQuery($q, 0, self::MAX)->loadAssocList() ?: [] as $r) {
-            $out[] = [
-                'uri'         => 'joomla://article/' . (int) $r['id'],
-                'name'        => (string) $r['title'],
-                'description' => 'Joomla article #' . (int) $r['id'],
-                'mimeType'    => 'text/plain',
-            ];
-        }
+            foreach ($items as $a) {
+                $catPublished = isset($a->category_published) ? (int) $a->category_published : null;
+
+                if (\count($out) < self::MAX && $this->isVisible($a, $catPublished, null)) {
+                    $out[] = [
+                        'uri'         => 'joomla://article/' . (int) $a->id,
+                        'name'        => (string) $a->title,
+                        'description' => 'Joomla article #' . (int) $a->id,
+                        'mimeType'    => 'text/plain',
+                    ];
+                }
+            }
+
+            $start += $page;
+        } while (\count($items) === $page && \count($out) < self::MAX && $start < 2000);
 
         return array_merge($plugin, $out);
     }
@@ -121,15 +151,18 @@ final class ResourceProvider
             throw new McpToolException('Insufficient scope: content.read is required to read resources.');
         }
 
-        $id = (int) $m[1];
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['a.title', 'a.introtext', 'a.fulltext', 'a.metadesc']))
-            ->from($db->quoteName('#__content', 'a'))
-            ->where($db->quoteName('a.id') . ' = :id')
-            ->bind(':id', $id, ParameterType::INTEGER);
-        $this->applyReadAcl($db, $q);
-        $row = $db->setQuery($q)->loadAssoc();
+        $id   = (int) $m[1];
+        $item = $id > 0 ? $this->contentModel('Article')->getItem($id) : null;
+        $row  = null;
+
+        if ($item && !empty($item->id)) {
+            $cat = new Category(Factory::getContainer()->get(DatabaseInterface::class));
+            $has = (int) $item->catid > 0 && $cat->load((int) $item->catid);
+
+            if ($this->isVisible($item, $has ? (int) $cat->published : null, $has ? (int) $cat->access : null)) {
+                $row = ['title' => $item->title, 'introtext' => $item->introtext, 'fulltext' => $item->fulltext, 'metadesc' => $item->metadesc];
+            }
+        }
 
         if (!$row) {
             throw new McpToolException('Article not found, unpublished or not accessible: ' . $id);

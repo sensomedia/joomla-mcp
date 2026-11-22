@@ -76,6 +76,10 @@ final class ClientTools
         );
     }
 
+    /**
+     * EXCEPTION SQL assumée (décision Fred, 22/11/2026) : le modèle Clients du back-office ne cherche
+     * que dans le nom et ne fournit pas les totaux de bannières / impressions / clics par client.
+     */
     private function listClients(array $a): array
     {
         $db = $this->s->db();

@@ -10,9 +10,9 @@ use Joomla\CMS\Access\Access;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Form;
+use Joomla\CMS\Table\Category as CategoryTable;
 use Joomla\CMS\User\User;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 
@@ -49,17 +49,7 @@ final class BannersSupport
 
     public function componentEnabled(): bool
     {
-        $db = $this->db();
-
-        try {
-            return (int) $db->setQuery(
-                $db->getQuery(true)->select($db->quoteName('enabled'))->from($db->quoteName('#__extensions'))
-                    ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-                    ->where($db->quoteName('element') . ' = ' . $db->quote(self::EXT))
-            )->loadResult() === 1;
-        } catch (\Throwable) {
-            return false;
-        }
+        return ComponentHelper::isEnabled(self::EXT);
     }
 
     public function params(): \Joomla\Registry\Registry
@@ -150,38 +140,53 @@ final class BannersSupport
     /** Une catégorie com_banners existe-t-elle ? */
     public function isCategory(int $id): bool
     {
-        $db = $this->db();
-
-        return $id > 0 && (bool) $db->setQuery(
-            $db->getQuery(true)->select('1')->from($db->quoteName('#__categories'))
-                ->where($db->quoteName('id') . ' = ' . $id)
-                ->where($db->quoteName('extension') . ' = ' . $db->quote(self::EXT))
-        )->loadResult();
+        return (string) ($this->category($id)->extension ?? '') === self::EXT;
     }
 
+    /** Catégorie (table Category du cœur) ou null. */
+    public function category(int $id): ?CategoryTable
+    {
+        $table = new CategoryTable($this->db());
+
+        return ($id > 0 && $table->load($id)) ? $table : null;
+    }
+
+    /**
+     * Catégories com_banners (hors corbeille) via le modèle « Categories » de com_categories (J5/J6).
+     * Nombre de bannières = comptes par état de son countItems() : publiées + dépubliées + archivées.
+     */
     public function categories(): array
     {
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->select($db->quoteName(['c.id', 'c.title', 'c.alias', 'c.path', 'c.level', 'c.parent_id', 'c.published', 'c.language']))
-            ->select('(SELECT COUNT(*) FROM ' . $db->quoteName('#__banners', 'b') . ' WHERE ' . $db->quoteName('b.catid') . ' = '
-                . $db->quoteName('c.id') . ' AND ' . $db->quoteName('b.state') . ' <> -2) AS ' . $db->quoteName('banners'))
-            ->from($db->quoteName('#__categories', 'c'))
-            ->where($db->quoteName('c.extension') . ' = ' . $db->quote(self::EXT))
-            ->where($db->quoteName('c.published') . ' <> -2')
-            ->order($db->quoteName('c.lft') . ' ASC');
+        $model = Factory::getApplication()->bootComponent('com_categories')
+            ->getMVCFactory()->createModel('Categories', 'Administrator', ['ignore_request' => true]);
+        $model->setState('filter.extension', self::EXT);
+        $model->setState('filter.published', '*');
+        $model->setState('list.ordering', 'a.lft');
+        $model->setState('list.direction', 'ASC');
+        $model->setState('list.start', 0);
+        $model->setState('list.limit', 0);
 
-        return array_map(fn (array $r) => [
-            'id'        => (int) $r['id'],
-            'title'     => (string) $r['title'],
-            'alias'     => (string) $r['alias'],
-            'path'      => (string) $r['path'],
-            'level'     => (int) $r['level'],
-            'parent_id' => (int) $r['parent_id'],
-            'state'     => $this->label(self::STATES, $r['published']),
-            'language'  => (string) $r['language'],
-            'banners'   => (int) $r['banners'],
-        ], $db->setQuery($q)->loadAssocList());
+        $out = [];
+
+        foreach ((array) $model->getItems() as $c) {
+            if ((int) $c->published === -2) {
+                continue;
+            }
+
+            $out[] = [
+                'id'        => (int) $c->id,
+                'title'     => (string) $c->title,
+                'alias'     => (string) $c->alias,
+                'path'      => (string) $c->path,
+                'level'     => (int) $c->level,
+                'parent_id' => (int) $c->parent_id,
+                'state'     => $this->label(self::STATES, $c->published),
+                'language'  => (string) $c->language,
+                'banners'   => (int) ($c->count_published ?? 0) + (int) ($c->count_unpublished ?? 0) + (int) ($c->count_archived ?? 0),
+            ];
+        }
+
+        return $out;
     }
 
     /** catid fourni (validé), sinon l'unique catégorie publiée. ⚠ BannerModel::save() CRÉE une catégorie si l'id est invalide. */
@@ -208,21 +213,33 @@ final class BannersSupport
             : '"catid" is required: the Banners component has several categories (see list_banner_categories).');
     }
 
-    /** @return array<int, array> lignes par id */
+    /**
+     * Lignes par id, lues par la table du modèle du cœur (BannerModel / ClientModel, J5/J6),
+     * réduites aux colonnes demandées. Au plus MAX_IDS ids (voir ids()).
+     *
+     * @return array<int, array> lignes par id
+     */
     public function rows(string $table, array $ids, array $cols): array
     {
-        if ($ids === []) {
+        $models = ['#__banners' => 'Banner', '#__banner_clients' => 'Client'];
+
+        if ($ids === [] || !isset($models[$table])) {
             return [];
         }
 
-        $db  = $this->db();
+        $t   = $this->model($models[$table])->getTable();
         $out = [];
 
-        foreach ($db->setQuery(
-            $db->getQuery(true)->select($db->quoteName($cols))->from($db->quoteName($table))
-                ->whereIn($db->quoteName('id'), $ids, ParameterType::INTEGER)
-        )->loadAssocList() as $r) {
-            $out[(int) $r['id']] = $r;
+        foreach ($ids as $id) {
+            if ($t->load((int) $id)) {
+                $row = [];
+
+                foreach ($cols as $col) {
+                    $row[$col] = $t->{$col} ?? null;
+                }
+
+                $out[(int) $id] = $row;
+            }
         }
 
         return $out;

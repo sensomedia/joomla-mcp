@@ -6,13 +6,11 @@
 
 namespace Sensomedia\Component\Sensomcp\Administrator\Controller;
 
-use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
-use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\ComponentParams;
 use Sensomedia\Component\Sensomcp\Administrator\Helper\LicenseClient;
 use Sensomedia\Component\Sensomcp\Administrator\Helper\UpdateSitesHelper;
 
@@ -124,39 +122,16 @@ class LicenseController extends BaseController
         return trim((string) ($this->componentParams()['license_key'] ?? ''));
     }
 
-    private function db(): DatabaseInterface
-    {
-        return Factory::getContainer()->get(DatabaseInterface::class);
-    }
 
     /** Params du composant lus NON cachés (effet immédiat). */
     private function componentParams(): array
     {
-        $db = $this->db();
-
-        return json_decode((string) $db->setQuery(
-            $db->getQuery(true)
-                ->select($db->quoteName('params'))
-                ->from($db->quoteName('#__extensions'))
-                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-                ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'))
-        )->loadResult(), true) ?: [];
+        return ComponentParams::get();
     }
 
     private function setComponentParams(array $changes): void
     {
-        $params = array_merge($this->componentParams(), $changes);
-        $json   = json_encode($params, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-        $db = $this->db();
-        $q  = $db->getQuery(true)
-            ->update($db->quoteName('#__extensions'))
-            ->set($db->quoteName('params') . ' = :params')
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'))
-            ->bind(':params', $json, ParameterType::STRING);
-
-        $db->setQuery($q)->execute();
+        ComponentParams::set($changes);
     }
 
     private function ajaxGuard(): void

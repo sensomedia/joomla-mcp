@@ -66,6 +66,30 @@ final class Pagination
         ];
     }
 
+    /**
+     * Variante pour une page déjà calculée et son total (ex. ListModel du cœur :
+     * getItems() + getTotal()).
+     *
+     * @since 1.7.0
+     */
+    public static function fromPage(array $items, int $total, int $offset, int $limit, string $itemsKey): array
+    {
+        $items = array_values($items);
+        $count = \count($items);
+
+        return [
+            $itemsKey    => $items,
+            'pagination' => [
+                'total'       => $total,
+                'count'       => $count,
+                'offset'      => $offset,
+                'limit'       => $limit,
+                'has_more'    => ($offset + $count) < $total,
+                'next_offset' => ($offset + $count) < $total ? $offset + $count : null,
+            ],
+        ];
+    }
+
     /** Variante pour une liste déjà en mémoire (ex. fichiers média). */
     public static function slice(array $items, int $offset, int $limit, string $itemsKey): array
     {

@@ -12,6 +12,7 @@
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Installer\InstallerAdapter;
+use Joomla\CMS\Table\Extension;
 use Joomla\Database\DatabaseInterface;
 
 class PlgWebservicesSensomcpInstallerScript
@@ -27,13 +28,13 @@ class PlgWebservicesSensomcpInstallerScript
 
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $q  = $db->getQuery(true)
-                ->update($db->quoteName('#__extensions'))
-                ->set($db->quoteName('enabled') . ' = 1')
-                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                ->where($db->quoteName('folder') . ' = ' . $db->quote(self::FOLDER))
-                ->where($db->quoteName('element') . ' = ' . $db->quote(self::ELEMENT));
-            $db->setQuery($q)->execute();
+            // Table « Extension » du cœur (J5/J6), comme l'installeur : sans ACL (installation CLI).
+            $table = new Extension($db);
+
+            if ($table->load(['type' => 'plugin', 'folder' => self::FOLDER, 'element' => self::ELEMENT])) {
+                $table->enabled = 1;
+                $table->store();
+            }
 
             // Prise en compte immédiate (le cache com_plugins masque sinon le plugin).
             Factory::getCache('com_plugins')->clean();

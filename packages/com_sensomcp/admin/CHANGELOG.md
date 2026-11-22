@@ -1,5 +1,26 @@
 # Senso MCP — Changelog
 
+## 1.7.0 - 2026-11-22
+### Fixed
+- Version history tools (list, keep, delete, restore) work again on Joomla 5.
+- Restoring a version now also brings back the article's images, options, metadata and editorial links.
+- Versions saved within the same second are listed in a stable order.
+- A version marked "keep forever" can no longer be deleted, as in the back-end.
+- Reading or creating an unpublished article no longer adds 404 entries to the Redirects manager.
+- Editorial links (Link A/B/C) are saved like in the back-end: international domain names are converted and anchors are kept.
+- Articles and article resources now also respect the access level of their category.
+- The "update available" notice compares versions correctly (1.10 is newer than 1.9).
+- `list_installed_components` shows the component names instead of raw language keys.
+- New installs: the scheduled maintenance task is created with its own permissions.
+### Changed
+- `search_articles` and `list_tags` search like the back-end lists: title, alias and note, with the `id:` prefix (`author:` and `content:` for articles).
+- Tags whose access level the user does not have are no longer listed for non-administrators.
+- Ids and other numbers are returned as numbers in article and tag results.
+- Tags attached to articles and contacts are listed in alphabetical order.
+- Enabling the JCH cache plugins and the required plugins (Settings page) is now recorded in the action log.
+- Reads and writes go through Joomla's own models and helpers, for better compatibility with Joomla updates and with plugins that react to content changes.
+- New helpers for add-ons (ordering, pagination); add-on versions that use them require Senso MCP 1.7.0.
+
 ## 1.6.1 - 2026-11-20
 ### Fixed
 - Saving an article (or other content) through Senso MCP no longer fails with "Error loading menu: api" when a third-party plugin, such as SpeedCache or a Smart Search content plugin, reads the site menu during the save. These plugins now get the site menu, so the save is reported correctly and their own work (for example clearing the page cache) is done.

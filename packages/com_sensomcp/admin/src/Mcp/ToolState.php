@@ -9,6 +9,7 @@ namespace Sensomedia\Component\Sensomcp\Administrator\Mcp;
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\ComponentParams;
 
 \defined('_JEXEC') or die;
 
@@ -79,23 +80,10 @@ final class ToolState
         return (int) (self::componentParams()['oauth_revoke_before'] ?? 0);
     }
 
-    /** Params composant lus SANS cache (kill-switches instantanés). */
+    /** Params composant lus SANS cache (kill-switches instantanés), table « Extension » du cœur. */
     private static function componentParams(): array
     {
-        try {
-            $db = self::db();
-            $q  = $db->getQuery(true)
-                ->select($db->quoteName('params'))
-                ->from($db->quoteName('#__extensions'))
-                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-                ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'));
-
-            $params = json_decode((string) $db->setQuery($q)->loadResult(), true);
-
-            return \is_array($params) ? $params : [];
-        } catch (\Throwable) {
-            return [];
-        }
+        return ComponentParams::get();
     }
 
     /** Fixe l'état d'un outil (upsert). */

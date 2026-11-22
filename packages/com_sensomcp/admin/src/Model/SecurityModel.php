@@ -7,6 +7,7 @@
 namespace Sensomedia\Component\Sensomcp\Administrator\Model;
 
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\ComponentParams;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolState;
 
 \defined('_JEXEC') or die;
@@ -29,21 +30,14 @@ class SecurityModel extends BaseDatabaseModel
     }
 
     /**
-     * Params de rate limiting (lus NON cachés depuis #__extensions, pour refléter
+     * Params de rate limiting (lus NON cachés via ComponentParams, pour refléter
      * la valeur juste enregistrée).
      *
      * @return array{enabled:bool, max:int, window:int}
      */
     public function getRateLimit(): array
     {
-        $db     = $this->getDatabase();
-        $params = json_decode((string) $db->setQuery(
-            $db->getQuery(true)
-                ->select($db->quoteName('params'))
-                ->from($db->quoteName('#__extensions'))
-                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-                ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'))
-        )->loadResult(), true) ?: [];
+        $params = ComponentParams::get();
 
         return [
             'enabled' => (int) ($params['ratelimit_enabled'] ?? 1) === 1,

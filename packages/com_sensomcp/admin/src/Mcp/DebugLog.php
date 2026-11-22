@@ -6,9 +6,8 @@
 
 namespace Sensomedia\Component\Sensomcp\Administrator\Mcp;
 
-use Joomla\CMS\Factory;
 use Joomla\CMS\Log\Log;
-use Joomla\Database\DatabaseInterface;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\ComponentParams;
 
 \defined('_JEXEC') or die;
 
@@ -51,17 +50,8 @@ final class DebugLog
         self::$enabled = false;
 
         try {
-            $db     = Factory::getContainer()->get(DatabaseInterface::class);
-            $params = json_decode(
-                (string) $db->setQuery(
-                    $db->getQuery(true)
-                        ->select($db->quoteName('params'))
-                        ->from($db->quoteName('#__extensions'))
-                        ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-                        ->where($db->quoteName('element') . ' = ' . $db->quote('com_sensomcp'))
-                )->loadResult(),
-                true
-            );
+            // Params lus sans cache (table « Extension » du cœur) : le débug s'active immédiatement.
+            $params = ComponentParams::get();
 
             self::$enabled = \is_array($params) && (int) ($params['debug'] ?? 0) === 1;
         } catch (\Throwable) {

@@ -166,7 +166,10 @@ class DashboardModel extends BaseDatabaseModel
         return $db->setQuery($query, 0, $limit)->loadAssocList('method', 'c') ?: [];
     }
 
-    /** Dernières requêtes. */
+    /**
+     * Dernières requêtes. EXCEPTION SQL assumée : jointure d'affichage (nom d'utilisateur) sur la table
+     * propre #__sensomcp_log ; une lecture UserFactory par ligne coûterait une requête par entrée.
+     */
     public function getRecent(int $limit = 30): array
     {
         $db    = $this->getDatabase();

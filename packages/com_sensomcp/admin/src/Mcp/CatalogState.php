@@ -198,7 +198,10 @@ final class CatalogState
         }
     }
 
-    /** Toutes les connexions suivies (tableau de bord). */
+    /**
+     * Toutes les connexions suivies (tableau de bord). EXCEPTION SQL assumée : jointures d'affichage
+     * (utilisateur, client OAuth) sur les tables propres #__sensomcp_*.
+     */
     public static function all(): array
     {
         try {
