@@ -28,12 +28,18 @@ class HtmlView extends BaseHtmlView
     public string $hostRequest = '';
     public bool $oauthManual   = false;
     public array $tokenGroups  = [];
+    public array $apiLogin     = [];
+    public array $noToken      = [];
+    public bool $apiLoginEdit  = false;
 
     public function display($tpl = null)
     {
         $model             = $this->getModel();
         $this->hostRequest = $model->getHostRequest();
         $this->tokenGroups = $model->getTokenGroups();
+        $this->noToken      = $model->getUsersWithoutToken();
+        $this->apiLogin     = \Sensomedia\Component\Sensomcp\Administrator\Helper\ApiLoginGroups::status();
+        $this->apiLoginEdit = \Sensomedia\Component\Sensomcp\Administrator\Helper\ApiLoginGroups::canEdit();
         $this->oauthManual = Factory::getApplication()->input->getInt('oauth_manual', 0) === 1;
         $this->endpoint   = $model->getEndpoint();
         $this->server     = $model->getServer();

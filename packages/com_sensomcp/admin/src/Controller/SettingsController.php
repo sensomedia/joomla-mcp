@@ -9,6 +9,7 @@ namespace Sensomedia\Component\Sensomcp\Administrator\Controller;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\Router\Route;
+use Sensomedia\Component\Sensomcp\Administrator\Helper\ApiLoginGroups;
 
 \defined('_JEXEC') or die;
 
@@ -145,6 +146,46 @@ class SettingsController extends BaseController
         };
 
         $this->setRedirect(Route::_('index.php?option=com_sensomcp&view=settings', false), Text::_($key), $type);
+    }
+
+    public function apiLoginGroupAdd(): void
+    {
+        $this->apiLoginGroup('add');
+    }
+
+    public function apiLoginGroupRemove(): void
+    {
+        $this->apiLoginGroup('remove');
+    }
+
+    /** Droit core.login.api (configuration globale) : core.admin global exigé, comme l'écran Permissions. */
+    private function apiLoginGroup(string $action): void
+    {
+        $model = $this->guard();
+
+        if ($model === null) {
+            return;
+        }
+
+        $back = Route::_('index.php?option=com_sensomcp&view=settings', false);
+
+        if (!ApiLoginGroups::canEdit()) {
+            $this->setRedirect($back, Text::_('JERROR_ALERTNOAUTHOR'), 'error');
+
+            return;
+        }
+
+        $res = ApiLoginGroups::change($action, $this->app->input->getInt('group_id', 0));
+
+        [$key, $type] = match ($res) {
+            'ok'     => [$action === 'add' ? 'COM_SENSOMCP_API_LOGIN_ADDED' : 'COM_SENSOMCP_API_LOGIN_REMOVED', 'message'],
+            'super'  => ['COM_SENSOMCP_API_LOGIN_SUPER', 'warning'],
+            'denied' => ['', 'error'],
+            default  => ['COM_SENSOMCP_TOKEN_GROUP_INVALID', 'error'],
+        };
+
+        // 'denied' : le modèle du cœur a déjà posé son message d'erreur.
+        $this->setRedirect($back, $key !== '' ? Text::_($key) : null, $type);
     }
 
     /**

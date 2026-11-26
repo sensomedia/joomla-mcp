@@ -42,9 +42,56 @@ final class Sensomcp extends CMSPlugin implements SubscriberInterface
     {
         return [
             'onAfterInitialise'      => 'onAfterInitialise',
+            'onAfterRoute'           => 'onAfterRoute',
             'onExtensionAfterInstall' => 'onExtensionChanged',
             'onExtensionAfterUpdate'  => 'onExtensionChanged',
         ];
+    }
+
+    /** Clé de session : URL d'autorisation OAuth à reprendre après une connexion sur la page « site hors ligne ». */
+    private const OFFLINE_RETURN = 'sensomcp.oauth_offline_return';
+
+    /**
+     * Site hors ligne : Joomla affiche la page offline AVANT le composant, et son formulaire de connexion
+     * renvoie à l'accueil → le consentement OAuth était perdu. On garde l'URL d'autorisation en session pour
+     * le visiteur non connecté, puis on l'y renvoie dès qu'il est connecté (droit « connexion hors ligne » du
+     * cœur inchangé : sans lui, la connexion échoue et rien ne se passe). Valable 15 minutes, GET uniquement.
+     */
+    public function onAfterRoute(): void
+    {
+        $app = Factory::getApplication();
+
+        if (!$app->isClient('site') || !$app->get('offline')) {
+            return;
+        }
+
+        $session = $app->getSession();
+        $user    = $app->getIdentity();
+        $input   = $app->input;
+
+        if (!$user || $user->guest) {
+            if ($input->getCmd('option') === 'com_sensomcp' && $input->getCmd('task') === 'oauth.authorize') {
+                $session->set(self::OFFLINE_RETURN, ['url' => Uri::getInstance()->toString(), 'at' => time()]);
+            }
+
+            return;
+        }
+
+        $saved = $session->get(self::OFFLINE_RETURN);
+
+        if (!\is_array($saved) || strtoupper($input->getMethod()) !== 'GET') {
+            return;
+        }
+
+        $session->remove(self::OFFLINE_RETURN);
+        $url = (string) ($saved['url'] ?? '');
+
+        if (time() - (int) ($saved['at'] ?? 0) > 900 || !str_starts_with($url, rtrim(Uri::root(), '/') . '/')
+            || ($input->getCmd('option') === 'com_sensomcp' && $input->getCmd('task') === 'oauth.authorize')) {
+            return;
+        }
+
+        $app->redirect($url);
     }
 
     /**

@@ -1,5 +1,14 @@
 # Senso MCP — Changelog
 
+## 1.7.3 - 2026-11-26
+### Changed
+- Settings page reorganised in three blocks: common requirements, OAuth connection and Joomla API token connection (optional), each with its own status. The client configuration (JSON) and the Claude Desktop bundle are now shown with the token connection they are used for.
+### Added
+- Settings: the user groups allowed to connect ("Web Services Login" permission, needed for OAuth and token connections) are shown and can be changed directly, with the same safeguards as Global Configuration.
+- Settings: members of the groups allowed to use Joomla API tokens who have no active token are listed for information.
+### Fixed
+- When the site is offline, signing in on the offline page during an OAuth connection now brings you back to the authorization page instead of the home page.
+
 ## 1.7.2 - 2026-11-26
 ### Changed
 - Joomla API token connections now follow Joomla's own API rules: they are refused when "API Authentication - Web Services Joomla Token" is disabled, and only Super Users can use them when "User - Joomla API Token" is disabled.

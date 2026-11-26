@@ -6,6 +6,7 @@
 
 namespace Sensomedia\Component\Sensomcp\Administrator\Model;
 
+use Joomla\CMS\Access\Access;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Helper\UserGroupsHelper;
 use Joomla\CMS\Http\HttpFactory;
@@ -139,6 +140,83 @@ class SettingsModel extends BaseDatabaseModel
         }
 
         return ['all' => $allowed === [], 'selected' => $sel, 'available' => $avail];
+    }
+
+    /**
+     * Membres (non bloqués) des groupes autorisés aux jetons API Joomla qui n'ont pas de jeton actif — information.
+     * Membres : Access::getUsersByGroup (groupes enfants compris) ; comptes : UserFactory ; état du jeton :
+     * #__user_profiles (clés joomlatoken.*, aucune API du cœur — comme plg_user_token).
+     * Rien n'est calculé quand tous les groupes sont autorisés (liste vide = tout le site).
+     *
+     * @return array{all:bool, total:int, users:list<array{id:int,name:string,username:string,state:string,login:bool}>}
+     *         state = none | disabled ; login = droit core.login.api ; users limité à $limit
+     */
+    public function getUsersWithoutToken(int $limit = 50): array
+    {
+        $groups = TokenGroups::allowed();
+
+        if ($groups === []) {
+            return ['all' => true, 'total' => 0, 'users' => []];
+        }
+
+        $ids = [];
+
+        foreach ($groups as $gid) {
+            foreach (Access::getUsersByGroup($gid, true) as $uid) {
+                $ids[(int) $uid] = true;
+            }
+        }
+
+        $ids = array_keys($ids);
+
+        if ($ids === []) {
+            return ['all' => false, 'total' => 0, 'users' => []];
+        }
+
+        $db    = $this->getDatabase();
+        $query = $db->getQuery(true)
+            ->select($db->quoteName(['user_id', 'profile_key', 'profile_value']))
+            ->from($db->quoteName('#__user_profiles'))
+            ->whereIn($db->quoteName('user_id'), $ids)
+            ->where($db->quoteName('profile_key') . ' IN (' . $db->quote('joomlatoken.token') . ', ' . $db->quote('joomlatoken.enabled') . ')');
+        $prof = [];
+
+        foreach ($db->setQuery($query)->loadObjectList() as $r) {
+            $prof[(int) $r->user_id][$r->profile_key] = (string) $r->profile_value;
+        }
+
+        $factory = Factory::getContainer()->get(UserFactoryInterface::class);
+        $out     = [];
+        $total   = 0;
+        sort($ids);
+
+        foreach ($ids as $uid) {
+            $p = $prof[$uid] ?? [];
+
+            if (($p['joomlatoken.token'] ?? '') !== '' && ($p['joomlatoken.enabled'] ?? '0') === '1') {
+                continue;
+            }
+
+            $user = $factory->loadUserById($uid);
+
+            if ((int) $user->id !== $uid || $user->block) {
+                continue;
+            }
+
+            $total++;
+
+            if (\count($out) < $limit) {
+                $out[] = [
+                    'id'       => $uid,
+                    'name'     => (string) $user->name,
+                    'username' => (string) $user->username,
+                    'state'    => ($p['joomlatoken.token'] ?? '') !== '' ? 'disabled' : 'none',
+                    'login'    => (bool) $user->authorise('core.login.api'),
+                ];
+            }
+        }
+
+        return ['all' => false, 'total' => $total, 'users' => $out];
     }
 
     /** @return string ok | last (refus de retirer le dernier groupe) | invalid */
