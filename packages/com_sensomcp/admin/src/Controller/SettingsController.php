@@ -33,7 +33,7 @@ class SettingsController extends BaseController
     /** Carte Connexion OAuth : .htaccess d'abord, découverte sous /api/ sinon. */
     public function oauthRepair(): void
     {
-        $model = $this->guard();
+        $model = $this->guard('', true);
 
         if ($model === null) {
             return;
@@ -190,15 +190,17 @@ class SettingsController extends BaseController
 
     /**
      * Jeton CSRF + core.admin sur Senso MCP (+ $pluginsAction sur com_plugins quand
-     * l'action modifie un autre plugin) ; renvoie le modèle, ou null après redirection.
+     * l'action modifie un autre plugin, + core.admin global si $global : écriture du .htaccess) ;
+     * renvoie le modèle, ou null après redirection.
      */
-    private function guard(string $pluginsAction = ''): ?\Sensomedia\Component\Sensomcp\Administrator\Model\SettingsModel
+    private function guard(string $pluginsAction = '', bool $global = false): ?\Sensomedia\Component\Sensomcp\Administrator\Model\SettingsModel
     {
         $this->checkToken();
 
         $user = $this->app->getIdentity();
 
-        if (!$user->authorise('core.admin', 'com_sensomcp') || ($pluginsAction !== '' && !$user->authorise($pluginsAction, 'com_plugins'))) {
+        if (!$user->authorise('core.admin', 'com_sensomcp') || ($pluginsAction !== '' && !$user->authorise($pluginsAction, 'com_plugins'))
+            || ($global && !$user->authorise('core.admin'))) {
             $this->setRedirect(Route::_('index.php?option=com_sensomcp&view=settings', false), Text::_('JERROR_ALERTNOAUTHOR'), 'error');
 
             return null;
@@ -213,7 +215,11 @@ class SettingsController extends BaseController
 
         $back = Route::_('index.php?option=com_sensomcp&view=settings', false);
 
-        if (!$this->app->getIdentity()->authorise('core.admin', 'com_sensomcp')) {
+        // Écriture du .htaccess du site : core.admin global (Super User) en plus de core.admin sur Senso MCP,
+        // une règle serveur pouvant rendre tout le site inaccessible.
+        $user = $this->app->getIdentity();
+
+        if (!$user->authorise('core.admin', 'com_sensomcp') || !$user->authorise('core.admin')) {
             $this->setRedirect($back, Text::_('JERROR_ALERTNOAUTHOR'), 'error');
 
             return;

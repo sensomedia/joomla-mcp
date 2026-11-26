@@ -100,7 +100,9 @@ $renderDirective = function (array $d, int $i) use ($htaccessOnly, $host): void 
         <div class="alert alert-warning small py-2"><?php echo Text::_('COM_SENSOMCP_DIR_PRESENT_NO_EFFECT'); ?></div>
     <?php endif; ?>
 
-    <?php if ($d['file'] !== null && $d['writable']) : ?>
+    <?php if ($d['file'] !== null && $d['writable'] && !$this->apiLoginEdit) : ?>
+        <p class="small text-muted mb-0"><?php echo Text::_('COM_SENSOMCP_HTACCESS_SUPERUSER_ONLY'); ?></p>
+    <?php elseif ($d['file'] !== null && $d['writable']) : ?>
         <form method="post" action="<?php echo Route::_('index.php?option=com_sensomcp'); ?>" class="d-inline"
               onsubmit="return confirm(<?php echo $this->escape(json_encode(Text::sprintf($d['present'] ? 'COM_SENSOMCP_DIR_REMOVE_CONFIRM' : 'COM_SENSOMCP_DIR_APPLY_CONFIRM', $d['file']))); ?>);">
             <input type="hidden" name="task" value="settings.<?php echo $d['present'] ? 'htaccessRemove' : 'htaccessAdd'; ?>">
@@ -314,7 +316,11 @@ $pluginRow = function (array $p) use ($badge, $taskForm): void {
                         <?php echo $taskForm('oauthFallbackOff', 'COM_SENSOMCP_OAUTH_FALLBACK_OFF', 'btn-outline-secondary'); ?>
                     <?php else : ?>
                         <p class="mb-3"><?php echo Text::_('COM_SENSOMCP_OAUTH_CARD_PROBLEM'); ?></p>
-                        <?php echo $taskForm('oauthRepair', 'COM_SENSOMCP_OAUTH_REPAIR', 'btn-primary', Text::_('COM_SENSOMCP_OAUTH_REPAIR_CONFIRM')); ?>
+                        <?php if ($this->apiLoginEdit) : ?>
+                            <?php echo $taskForm('oauthRepair', 'COM_SENSOMCP_OAUTH_REPAIR', 'btn-primary', Text::_('COM_SENSOMCP_OAUTH_REPAIR_CONFIRM')); ?>
+                        <?php else : ?>
+                            <p class="small text-muted mb-0"><?php echo Text::_('COM_SENSOMCP_HTACCESS_SUPERUSER_ONLY'); ?></p>
+                        <?php endif; ?>
                         <p class="small text-muted mt-2 mb-0"><?php echo Text::_('COM_SENSOMCP_OAUTH_REPAIR_HINT'); ?></p>
                     <?php endif; ?>
 

@@ -1,5 +1,9 @@
 # Senso MCP — Changelog
 
+## 1.7.4 - 2026-11-26
+### Changed
+- Settings: changing the site's .htaccess file (server rules, OAuth "Repair") now requires a Super User, as Global Configuration does; other administrators see the rules to copy but no buttons.
+
 ## 1.7.3 - 2026-11-26
 ### Changed
 - Settings page reorganised in three blocks: common requirements, OAuth connection and Joomla API token connection (optional), each with its own status. The client configuration (JSON) and the Claude Desktop bundle are now shown with the token connection they are used for.
