@@ -57,16 +57,20 @@ class SettingsModel extends BaseDatabaseModel
         return 'unknown';
     }
 
-    /** Plugins requis : [folder, element, libellé]. */
+    /**
+     * Plugins requis : [folder, element, libellé, token_only].
+     * `token_only` : seulement pour la connexion par jeton API Joomla (OAuth fonctionne sans).
+     */
     private const REQUIRED_PLUGINS = [
-        ['folder' => 'webservices',        'element' => 'sensomcp', 'label' => 'Web Services - Senso MCP'],
-        ['folder' => 'system',             'element' => 'sensomcp', 'label' => 'System - Senso MCP'],
-        ['folder' => 'api-authentication', 'element' => 'token',    'label' => 'API Authentication - Web Services Joomla Token'],
-        ['folder' => 'user',               'element' => 'token',    'label' => 'User - Joomla API Token'],
+        ['folder' => 'webservices',        'element' => 'sensomcp', 'label' => 'Web Services - Senso MCP',                       'token_only' => false],
+        ['folder' => 'system',             'element' => 'sensomcp', 'label' => 'System - Senso MCP',                             'token_only' => false],
+        ['folder' => 'api-authentication', 'element' => 'token',    'label' => 'API Authentication - Web Services Joomla Token', 'token_only' => true],
+        ['folder' => 'user',               'element' => 'token',    'label' => 'User - Joomla API Token',                        'token_only' => true],
     ];
 
     /**
-     * Active les plugins requis installés mais désactivés ($key = « folder.element », vide = tous).
+     * Active les plugins requis installés mais désactivés ($key = « folder.element » ; vide = tous
+     * sauf ceux propres à la connexion par jeton, que l'administrateur peut vouloir laisser éteints).
      * Modèle « Plugin » de com_plugins (J5/J6) : ACL core.edit.state com_plugins (déjà exigée par le
      * contrôleur), événements, purge du cache com_plugins, journal des actions.
      *
@@ -77,7 +81,7 @@ class SettingsModel extends BaseDatabaseModel
         $pks = [];
 
         foreach (self::REQUIRED_PLUGINS as $p) {
-            if ($key !== '' && $key !== $p['folder'] . '.' . $p['element']) {
+            if ($key !== '' ? $key !== $p['folder'] . '.' . $p['element'] : $p['token_only']) {
                 continue;
             }
 
@@ -176,8 +180,9 @@ class SettingsModel extends BaseDatabaseModel
             $out[] = [
                 'key'       => $p['folder'] . '.' . $p['element'],
                 'label'     => $p['label'],
-                'installed' => $row !== null,
-                'enabled'   => $row !== null && (int) $row->enabled === 1,
+                'installed'  => $row !== null,
+                'enabled'    => $row !== null && (int) $row->enabled === 1,
+                'token_only' => $p['token_only'],
             ];
         }
 

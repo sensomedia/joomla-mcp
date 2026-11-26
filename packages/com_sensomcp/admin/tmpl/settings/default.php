@@ -142,7 +142,7 @@ $renderDirective = function (array $d, int $i) use ($htaccessOnly, $host): void 
     <div class="row">
         <div class="col-md-6 mb-4">
             <div class="card h-100">
-                <?php $disabledCount = \count(array_filter($this->plugins, static fn (array $p): bool => $p['installed'] && !$p['enabled'])); ?>
+                <?php $disabledCount = \count(array_filter($this->plugins, static fn (array $p): bool => $p['installed'] && !$p['enabled'] && !$p['token_only'])); ?>
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <span><?php echo Text::_('COM_SENSOMCP_PLUGINS_STATUS'); ?></span>
                     <?php if ($disabledCount > 1) : ?>
@@ -161,12 +161,15 @@ $renderDirective = function (array $d, int $i) use ($htaccessOnly, $host): void 
                                     } elseif ($p['enabled']) {
                                         echo $badge(true);
                                     } else {
-                                        echo '<span class="badge bg-warning me-2">' . Text::_('COM_SENSOMCP_DISABLED') . '</span>';
+                                        echo '<span class="badge ' . ($p['token_only'] ? 'bg-secondary' : 'bg-warning') . ' me-2">' . Text::_('COM_SENSOMCP_DISABLED') . '</span>';
                                         echo $taskForm('pluginsEnable', 'COM_SENSOMCP_PLUGIN_ENABLE', 'btn-outline-primary', '', ['plugin' => $p['key']]);
                                     }
                                     ?>
                                 </span>
                             </div>
+                            <?php if ($p['token_only']) : ?>
+                                <div class="small text-muted mt-1"><?php echo Text::_('COM_SENSOMCP_PLUGIN_TOKEN_ONLY'); ?></div>
+                            <?php endif; ?>
 
                             <?php if ($p['key'] === 'user.token' && $p['installed']) : ?>
                                 <?php $tg = $this->tokenGroups; ?>

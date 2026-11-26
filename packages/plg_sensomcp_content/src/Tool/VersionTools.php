@@ -15,6 +15,7 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\UrlGuard;
+use Sensomedia\Plugin\Sensomcp\Content\Support\ContentAcl;
 use Sensomedia\Plugin\Sensomcp\Content\Support\SavesArticleModel;
 
 \defined('_JEXEC') or die;
@@ -187,6 +188,10 @@ final class VersionTools
         return function (User $me, array $a): bool {
             $id = (int) ($a['article_id'] ?? 0);
 
+            if ($a === []) {
+                return ContentAcl::anyCategory($me, 'core.edit', 'core.edit.own');
+            }
+
             if ($id <= 0) {
                 return $me->authorise('core.edit', 'com_content') || $me->authorise('core.edit.own', 'com_content');
             }
@@ -200,6 +205,10 @@ final class VersionTools
     {
         return function (User $me, array $a): bool {
             $vid = (int) ($a['version_id'] ?? $a['version_id_1'] ?? 0);
+
+            if ($a === []) {
+                return ContentAcl::anyCategory($me, 'core.edit', 'core.edit.own');
+            }
 
             if ($vid <= 0) {
                 return $me->authorise('core.edit', 'com_content') || $me->authorise('core.edit.own', 'com_content');

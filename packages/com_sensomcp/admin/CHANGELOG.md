@@ -1,5 +1,16 @@
 # Senso MCP — Changelog
 
+## 1.7.2 - 2026-11-26
+### Changed
+- Joomla API token connections now follow Joomla's own API rules: they are refused when "API Authentication - Web Services Joomla Token" is disabled, and only Super Users can use them when "User - Joomla API Token" is disabled.
+- Settings: the two Joomla API token plugins are marked as needed for token connections only; OAuth connections work without them, and "Enable all" no longer turns them on.
+
+## 1.7.1 - 2026-11-24
+### Fixed
+- When installing or updating an add-on from the Plugins & Tools page fails, the message now gives the reason (for example the Senso MCP version the add-on requires).
+- Article and category write tools are available to users allowed to create or edit in some categories only (for example a single Blog category); each write is still checked against the target category or article.
+- Changing the state of or deleting articles is checked article by article, so it also works for users allowed to do it in some categories only.
+
 ## 1.7.0 - 2026-11-22
 ### Fixed
 - Version history tools (list, keep, delete, restore) work again on Joomla 5.

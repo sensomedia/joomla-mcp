@@ -145,6 +145,16 @@ class PluginsController extends BaseController
             InstallerHelper::cleanupInstall($pkg, $dir);
         }
 
+        // Motif du refus : le script d'installation du plugin (ex. « requires Senso MCP 1.7.0 ») et
+        // l'installeur Joomla le placent dans la file de messages, que cette réponse AJAX n'affiche
+        // pas. On le relaie dans le message d'erreur, et on vide la file dans tous les cas (sinon il
+        // réapparaîtrait au prochain chargement de page).
+        $reasons = $this->drainInstallerMessages();
+
+        if (!$ok && $reasons) {
+            $err = trim($err . "\n\n" . implode("\n", $reasons));
+        }
+
         // Auto-activation du plugin fraîchement installé.
         if ($ok) {
             $id = (int) (ExtensionRecords::plugin('sensomcp', $element)->extension_id ?? 0);
@@ -331,6 +341,31 @@ class PluginsController extends BaseController
         if (!$this->app->getIdentity()->authorise('core.admin', 'com_sensomcp')) {
             $this->ajaxOut(false, Text::_('JERROR_ALERTNOAUTHOR'));
         }
+    }
+
+    /**
+     * Vide la file de messages de l'application et renvoie, en texte brut et sans doublon, les
+     * messages d'erreur et d'avertissement (installeur Joomla, script d'installation du plugin).
+     *
+     * @return string[]
+     */
+    private function drainInstallerMessages(): array
+    {
+        $out = [];
+
+        foreach ($this->app->getMessageQueue(true) as $m) {
+            if (!\in_array((string) ($m['type'] ?? ''), ['error', 'danger', 'warning'], true)) {
+                continue;
+            }
+
+            $text = trim(preg_replace('/\s+/u', ' ', html_entity_decode(strip_tags((string) ($m['message'] ?? '')), ENT_QUOTES | ENT_HTML5, 'UTF-8')));
+
+            if ($text !== '' && !\in_array($text, $out, true)) {
+                $out[] = $text;
+            }
+        }
+
+        return $out;
     }
 
     private function ajaxOut(bool $ok, string $error = '', array $data = []): void

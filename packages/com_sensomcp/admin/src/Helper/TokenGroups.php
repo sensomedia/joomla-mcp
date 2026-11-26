@@ -86,10 +86,15 @@ final class TokenGroups
         return array_values(array_unique(array_filter($ids)));
     }
 
-    /** L'utilisateur appartient-il à un groupe autorisé (ou tous le sont-ils) ? */
+    /**
+     * L'utilisateur appartient-il à un groupe autorisé (ou tous le sont-ils) ?
+     * Comme plg_api-authentication_token : plugin « User - Joomla API Token » désactivé
+     * → réglage ignoré, seuls les Super Users [8] restent autorisés.
+     */
     public static function userAllowed(int $userId): bool
     {
-        $allowed = self::allowed();
+        $row     = ExtensionRecords::plugin('user', 'token');
+        $allowed = $row !== null && (int) $row->enabled === 1 ? self::allowed() : [8];
 
         if ($allowed === []) {
             return true;

@@ -23,6 +23,7 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\Ordering;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\Pagination;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\UrlGuard;
+use Sensomedia\Plugin\Sensomcp\Content\Support\ContentAcl;
 use Sensomedia\Plugin\Sensomcp\Content\Support\ResolvesPublicUrls;
 use Sensomedia\Plugin\Sensomcp\Content\Support\SavesArticleModel;
 
@@ -160,6 +161,11 @@ final class ArticleTools
             fn (array $a) => $this->createArticle($a),
             'content.write',
             ['acl' => function (User $me, array $a): bool {
+                // Sans arguments (tools/list, consentement) : une catégorie autorisée suffit.
+                if ($a === []) {
+                    return ContentAcl::anyCategory($me, 'core.create');
+                }
+
                 $catid = (int) ($a['catid'] ?? 0) ?: $this->defaultCatid;
 
                 return (bool) $me->authorise('core.create', $catid > 0 ? 'com_content.category.' . $catid : 'com_content');
@@ -205,6 +211,10 @@ final class ArticleTools
             fn (array $a) => $this->updateArticle($a),
             'content.write',
             ['acl' => function (User $me, array $a): bool {
+                if ($a === []) {
+                    return ContentAcl::anyCategory($me, 'core.edit', 'core.edit.own');
+                }
+
                 $id = (int) ($a['id'] ?? 0);
 
                 if ($id <= 0) {
@@ -232,7 +242,9 @@ final class ArticleTools
             ],
             fn (array $a) => $this->setArticleState($a),
             'content.write',
-            ['acl' => ['core.edit.state', 'com_content']]
+            ['acl' => static fn (User $me, array $a): bool => $a === []
+                ? ContentAcl::anyCategory($me, 'core.edit.state')
+                : ContentAcl::onEachArticle($me, 'core.edit.state', ContentAcl::ids($a['ids'] ?? []))]
         );
 
         $registry->register(
@@ -260,7 +272,9 @@ final class ArticleTools
             ],
             fn (array $a) => $this->deleteArticle($a),
             'content.write',
-            ['acl' => ['core.delete', 'com_content']]
+            ['acl' => static fn (User $me, array $a): bool => $a === []
+                ? ContentAcl::anyCategory($me, 'core.delete')
+                : ContentAcl::onEachArticle($me, 'core.delete', ContentAcl::ids($a['ids'] ?? []))]
         );
 
         $registry->register(
@@ -278,10 +292,12 @@ final class ArticleTools
             ],
             fn (array $a) => $this->reorderArticle($a),
             'content.write',
-            ['acl' => fn (User $me, array $a): bool => (bool) $me->authorise(
-                'core.edit.state',
-                (int) ($a['id'] ?? 0) > 0 ? 'com_content.article.' . (int) $a['id'] : 'com_content'
-            )]
+            ['acl' => static fn (User $me, array $a): bool => $a === []
+                ? ContentAcl::anyCategory($me, 'core.edit.state')
+                : (bool) $me->authorise(
+                    'core.edit.state',
+                    (int) ($a['id'] ?? 0) > 0 ? 'com_content.article.' . (int) $a['id'] : 'com_content'
+                )]
         );
 
         $registry->register(

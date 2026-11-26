@@ -17,6 +17,7 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\FormGate;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ActionLogContext;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\McpToolException;
 use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolRegistry;
+use Sensomedia\Plugin\Sensomcp\Content\Support\ContentAcl;
 use Sensomedia\Plugin\Sensomcp\Content\Support\ResolvesPublicUrls;
 
 \defined('_JEXEC') or die;
@@ -107,6 +108,10 @@ final class CategoryTools
             fn (array $a) => $this->createCategory($a),
             'content.write',
             ['acl' => static function (User $me, array $a): bool {
+                if ($a === []) {
+                    return ContentAcl::anyCategory($me, 'core.create');
+                }
+
                 $parent = (int) ($a['parent_id'] ?? 1);
 
                 return (bool) $me->authorise('core.create', $parent > 1 ? 'com_content.category.' . $parent : 'com_content');
@@ -136,10 +141,12 @@ final class CategoryTools
             ],
             fn (array $a) => $this->updateCategory($a),
             'content.write',
-            ['acl' => static fn (User $me, array $a): bool => (bool) $me->authorise(
-                'core.edit',
-                (int) ($a['id'] ?? 0) > 0 ? 'com_content.category.' . (int) $a['id'] : 'com_content'
-            )]
+            ['acl' => static fn (User $me, array $a): bool => $a === []
+                ? ContentAcl::anyCategory($me, 'core.edit')
+                : (bool) $me->authorise(
+                    'core.edit',
+                    (int) ($a['id'] ?? 0) > 0 ? 'com_content.category.' . (int) $a['id'] : 'com_content'
+                )]
         );
 
         $registry->register(
@@ -159,10 +166,12 @@ final class CategoryTools
             ],
             fn (array $a) => $this->reorderCategory($a),
             'content.write',
-            ['acl' => static fn (User $me, array $a): bool => (bool) $me->authorise(
-                'core.edit.state',
-                (int) ($a['id'] ?? 0) > 0 ? 'com_content.category.' . (int) $a['id'] : 'com_content'
-            )]
+            ['acl' => static fn (User $me, array $a): bool => $a === []
+                ? ContentAcl::anyCategory($me, 'core.edit.state')
+                : (bool) $me->authorise(
+                    'core.edit.state',
+                    (int) ($a['id'] ?? 0) > 0 ? 'com_content.category.' . (int) $a['id'] : 'com_content'
+                )]
         );
 
         $registry->register(

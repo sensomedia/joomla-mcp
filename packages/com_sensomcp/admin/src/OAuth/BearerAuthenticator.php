@@ -7,6 +7,7 @@
 namespace Sensomedia\Component\Sensomcp\Administrator\OAuth;
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -20,7 +21,8 @@ use Sensomedia\Component\Sensomcp\Administrator\Mcp\ToolState;
  *
  * Accepte deux types de jetons dans l'en-tête `Authorization: Bearer …` :
  *   1. un access token OAuth 2.1 émis par ce serveur (JWT signé, audience = MCP) ;
- *   2. un jeton API Joomla natif (compat Claude Desktop / clients à en-tête).
+ *   2. un jeton API Joomla natif (compat Claude Desktop / clients à en-tête), seulement si
+ *      « API Authentication - Web Services Joomla Token » est activé, comme pour l'API du cœur.
  *
  * Renvoie l'ID utilisateur authentifié, ou null.
  */
@@ -109,6 +111,13 @@ final class BearerAuthenticator
 
     private function validateJoomlaToken(string $token): ?int
     {
+        // Même règle que l'API du cœur : « API Authentication - Web Services Joomla Token »
+        // désactivé = jetons API Joomla refusés, y compris ceux déjà générés dans les profils
+        // (l'accès OAuth n'en dépend pas). « User - Joomla API Token » : voir TokenGroups::userAllowed().
+        if (!PluginHelper::isEnabled('api-authentication', 'token')) {
+            return null;
+        }
+
         $decoded = base64_decode(strtr($token, '-_', '+/'), false);
 
         if ($decoded === false || !str_contains($decoded, ':')) {
